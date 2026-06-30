@@ -1,0 +1,13 @@
+Put the GGUF model file here ONLY if you want it bundled inside the app
+package itself (increases APK size by the model's size, ~550MB for the
+recommended Q4_K_M quant). This is the easier option for personal/dev use.
+
+File needed: ChatGPT-2.V2.Q4_K_M.gguf
+Source: https://huggingface.co/mradermacher/ChatGPT-2.V2-GGUF
+        (download the Q4_K_M file specifically — see README.md for why)
+
+If you'd rather NOT bloat the APK, skip this folder entirely and instead
+have the app prompt the user to pick the .gguf file via a file picker on
+first launch, copying it into app-private storage from there. See
+README.md → "Alternative: load model via file picker instead of bundling"
+for that approach — it's a small change to model_loader.dart.

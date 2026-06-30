@@ -1,0 +1,18 @@
+# android/app/build.gradle — additions needed
+
+Your existing Flutter-generated `android/app/build.gradle` (or `.gradle.kts`)
+already has a `dependencies { }` block from `flutter create`. Add this line
+inside it, pointing at the AAR you downloaded (see README.md → "Native
+library setup"):
+
+    dependencies {
+        implementation files('libs/llama-cpp-dart.aar')
+        // ...whatever Flutter's template already put here, keep it.
+    }
+
+Also make sure `minSdkVersion` is at least 24 in `android/app/build.gradle`
+(`defaultConfig { minSdkVersion 24 }`) — llama.cpp's Android build targets
+API 24+.
+
+No other Gradle/CMake/NDK config is needed — llama_cpp_dart ships a
+pre-built .so inside the AAR, so Gradle just needs to unpack and bundle it.
