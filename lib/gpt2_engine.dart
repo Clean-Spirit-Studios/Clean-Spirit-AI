@@ -4,8 +4,7 @@
 //
 // NOTE ON THE FILENAME: this file is still called gpt2_engine.dart for
 // historical reasons (the app started out running GPT-2), but as of this
-// version it runs Qwen2.5-3B-Instruct instead — a newer, larger, and more
-// capable model than the 1.5B version used previously. Feel free to rename
+// version it runs Qwen2.5-1.5B-Instruct instead. Feel free to rename
 // the file; nothing outside this file depends on its name.
 //
 // IMPORTANT — platform-specific library loading:
@@ -44,14 +43,12 @@ class Gpt2Engine {
   Future<void> initialize() async {
     final modelPath = await ModelLoader.resolveModelPath();
 
-    // Qwen2.5-3B-Instruct supports up to 32,768 tokens of context per its
+    // Qwen2.5-1.5B-Instruct supports up to 32,768 tokens of context per its
     // model card. 4096 is a comfortable middle ground for a phone — enough
     // for a long conversation without an oversized KV cache eating RAM.
-    // Raise this if you want longer history and have headroom. Note this
-    // 3B model needs noticeably more RAM to load than the previous 1.5B
-    // version did (roughly 3-4GB vs 1.5-2GB) — if you're testing on a
-    // lower-RAM device and hit OOM/crashes, consider lowering contextSize
-    // first before reverting to a smaller model.
+    // Raise this if you want longer history and have headroom; this 1.5B
+    // model is light on RAM (roughly 1.5-2GB to load), so there's room to
+    // grow if needed.
     const contextSize = 4096;
 
     if (Platform.isIOS || Platform.isMacOS) {

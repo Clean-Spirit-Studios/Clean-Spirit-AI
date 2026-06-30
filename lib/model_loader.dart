@@ -17,17 +17,17 @@ import 'package:path_provider/path_provider.dart';
 import 'package:resumable_downloader/resumable_downloader.dart';
 
 /// Name of the GGUF file we expect. Change this if you pick a different
-/// quant (e.g. 'qwen2.5-3b-instruct-q5_k_m.gguf' for higher quality, or
-/// 'qwen2.5-3b-instruct-q3_k_m.gguf' for a smaller footprint) — make sure
+/// quant (e.g. 'qwen2.5-1.5b-instruct-q5_k_m.gguf' for higher quality, or
+/// 'qwen2.5-1.5b-instruct-q3_k_m.gguf' for a smaller footprint) — make sure
 /// kModelDownloadUrl below points at the matching file.
-const String kModelFileName = 'qwen2.5-3b-instruct-q4_k_m.gguf';
+const String kModelFileName = 'qwen2.5-1.5b-instruct-q4_k_m.gguf';
 
 /// Direct download URL for the model file. This is the official Qwen GGUF
 /// repo on Hugging Face. If you change kModelFileName above, update this
 /// to match — Hugging Face's "download" link format is:
 /// https://huggingface.co/<org>/<repo>/resolve/main/<filename>?download=true
 const String kModelDownloadUrl =
-    'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/$kModelFileName?download=true';
+    'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/$kModelFileName?download=true';
 
 class ModelLoader {
   static DownloadManager? _downloadManager;
