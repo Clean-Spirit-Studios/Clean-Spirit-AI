@@ -1,0 +1,52 @@
+name: gpt2_chat
+description: AI chat app that downloads its model once on first launch, then runs entirely offline.
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Pinned to the exact prerelease — pub's default ^0.9.0 constraint does
+  # NOT match prerelease versions like 0.9.0-dev.9 under semver rules, so
+  # this needs an exact version string, not a caret range. This is also why
+  # we deliberately do NOT use `^0.9.0-dev.9` here (that resolves to "any
+  # 0.9.x", which could later jump to a real 0.9.0 stable with a changed
+  # API) — pin exact until you've verified a newer dev build still matches
+  # the LlamaEngine/EngineChat API this project's code uses.
+  llama_cpp_dart: 0.9.0-dev.9
+  path_provider: ^2.1.4
+  # Downloads the GGUF model on first launch, with resumable (HTTP Range)
+  # support so an interrupted download continues rather than restarting.
+  # Pinned to the actual latest published version (0.0.38 at time of
+  # writing) — this package is pre-1.0, check pub.dev before bumping.
+  resumable_downloader: ^0.0.38
+  # dio is a transitive dependency of resumable_downloader, but
+  # model_loader.dart also imports it directly (for a HEAD request to get
+  # the model's total size for display), so it needs to be listed here too.
+  dio: ^5.8.0
+  # Used by download_screen.dart to detect mobile-data-only connections
+  # and warn before starting a ~1.1GB download.
+  connectivity_plus: ^6.1.0
+  # Keeps the screen on while downloading the model so a long download
+  # doesn't get interrupted by the device going to sleep.
+  wakelock_plus: ^1.2.10
+  # Renders markdown (##, **, tables, code blocks) in assistant chat bubbles.
+  flutter_markdown: ^0.7.4
+  shared_preferences: ^2.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  # NOTE: there is deliberately no `assets:` section bundling the GGUF
+  # model file anymore. The model is downloaded at runtime on first launch
+  # instead (see lib/download_screen.dart + lib/model_loader.dart) — this
+  # keeps the installable APK/IPA small (~10-20MB) instead of 1GB+.

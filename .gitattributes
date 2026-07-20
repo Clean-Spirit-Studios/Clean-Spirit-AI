@@ -1,0 +1,2 @@
+Qwen3-4B-Instruct-2507-Q4_K_M.gguf export-ignore
+*.gguf filter=lfs diff=lfs merge=lfs -text

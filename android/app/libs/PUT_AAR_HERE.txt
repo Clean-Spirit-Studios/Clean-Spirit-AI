@@ -1,0 +1,13 @@
+Put `llama-cpp-dart.aar` here.
+
+Download it from the Releases page of:
+  https://github.com/netdur/llama_cpp_dart/releases
+
+Pick the latest release (e.g. v0.9.0-dev.9 at time of writing) and grab the
+Android CPU AAR asset, NOT the Hexagon one (Hexagon is Snapdragon NPU
+acceleration, pending physical-device validation per the project README —
+stick with the plain CPU AAR for a normal phone).
+
+This file is not committed to source control (binary, and licensed
+separately under NativeMind's terms per the upstream project) — every
+developer working on this app needs to download it themselves once.
