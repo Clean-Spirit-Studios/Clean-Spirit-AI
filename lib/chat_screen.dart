@@ -538,20 +538,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _inputController.text.trim();
     if (text.isEmpty || _isGenerating) return;
 
-    final isDualPass =
-        _engine.activeModel == ActiveModel.auto && _engine.has1_5b && _engine.has4b;
-
-    final (stream, variant) = _engine.sendMessageWithVariant(
-      text,
-      onPhaseChange: (phase) {
-        if (mounted) {
-          setState(() {
-            // Phase 3 signals generation is done - clear the phase indicator
-            _messages.last.autoPhase = phase == 3 ? null : phase;
-          });
-        }
-      },
-    );
+    final (stream, variant) = _engine.sendMessageWithVariant(text);
 
     setState(() {
       _messages.add(ChatTurn(role: ChatRole.user, text: text));
@@ -559,8 +546,6 @@ class _ChatScreenState extends State<ChatScreen> {
         role: ChatRole.assistant,
         text: '',
         isStreaming: true,
-        autoPhase: isDualPass ? 1 : null,
-        isDualPass: isDualPass,
       ));
       _isGenerating = true;
       _lastUsedVariant = variant;
@@ -595,8 +580,6 @@ class _ChatScreenState extends State<ChatScreen> {
           role: ChatRole.assistant,
           text: _messages.last.text,
           thinking: _messages.last.thinking,
-          isDualPass: _messages.last.isDualPass,
-          // autoPhase cleared - streaming is done
         );
         _isGenerating = false;
       });
@@ -828,34 +811,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       thinking: turn.thinking,
                       isThinking: isThinking,
                     ),
-                  // Dual-pass phase indicator - shown while streaming in Auto mode
-                  if (turn.isStreaming && turn.autoPhase != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            turn.autoPhase == 1
-                                ? Icons.bolt
-                                : Icons.verified_outlined,
-                            size: 11,
-                            color: theme.colorScheme.onSurface.withValues(alpha: 0.45),
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            turn.autoPhase == 1
-                                ? 'Drafting with 1.5B...'
-                                : 'Checking facts with 4B...',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: theme.colorScheme.onSurface.withValues(alpha: 0.45),
-                              fontStyle: FontStyle.italic,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+
                   if (showPlaceholder || turn.text.isNotEmpty)
                     Row(
                       mainAxisSize: MainAxisSize.min,
@@ -911,11 +867,9 @@ class _MessageBubbleState extends State<_MessageBubble> {
             Padding(
               padding: const EdgeInsets.only(left: 4, bottom: 2),
               child: Text(
-                turn.isDualPass
-                    ? '1.5B draft - fact-checked by 4B'
-                    : (widget.lastVariant == ModelVariant.fast
-                        ? 'QWEN2.5 1.5B'
-                        : 'QWEN3 4B'),
+                widget.lastVariant == ModelVariant.fast
+                    ? 'QWEN2.5 1.5B'
+                    : 'QWEN3 4B',
                 style: TextStyle(
                   fontSize: 10,
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
