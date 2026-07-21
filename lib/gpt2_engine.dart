@@ -46,6 +46,11 @@ bool _needsAccurateModel(String text) {
     RegExp(r'^(bye|goodbye|see you|cya)[!.,\s]*$'),
     RegExp(r'^(lol|haha|hehe|lmao)[!.,\s]*$'),
     RegExp(r'^(ok|okay|got it|sure|alright)[!.,\s]*$'),
+    // Creative - no factual claims to verify
+    RegExp(r'\b(write|draft|compose) (a|an|me a|me an)\b'),
+    RegExp(r'\b(poem|haiku|story|joke|limerick|song)\b'),
+    // Opinion / recommendation - no single correct answer
+    RegExp(r'\b(what.*good|recommend|suggest|should i|best.*for me)\b'),
   ];
   for (final p in simplePatterns) {
     if (p.hasMatch(lower)) return false;
@@ -70,12 +75,37 @@ bool _needsAccurateModel(String text) {
   return false;
 }
 
+/// Detects when the user is asking for more detail after a brief auto-mode answer.
+bool _isDetailRequest(String text) {
+  final lower = text.toLowerCase().trim();
+  final patterns = [
+    RegExp(r'^(yes|yeah|yep|yup|sure|ok|okay|go ahead|please)[!.,\s]*$'),
+    RegExp(r'\b(more detail|more details|elaborate|expand|explain more|tell me more|in depth|deeper|full explanation|describe in detail)\b'),
+    RegExp(r'^(yes[,.]?\s*(please|do it|go on|continue|tell me))[!.,\s]*$'),
+  ];
+  for (final p in patterns) {
+    if (p.hasMatch(lower)) return true;
+  }
+  return false;
+}
+
 class Gpt2Engine {
   LlamaEngine? _fastEngine;
   EngineChat? _fastChat;
+  EngineChat? _autoDraftChat;  // 1.5B brief-draft persona used in auto mode
 
   LlamaEngine? _accurateEngine;
-  EngineChat? _accurateChat;
+  EngineChat? _accurateChat;   // natural assistant - used when mode == accurate
+  EngineChat? _verifierChat;   // patch-only persona - used exclusively in _dualPassStream
+
+  // Simple in-memory LRU response cache (auto mode)
+  final _responseCache = <String, String>{};
+  static const _kCacheLimit = 20;
+
+  // Tracks whether the last auto-mode reply ended with "want more detail?"
+  // and what the original question was, so we can expand on user confirmation.
+  bool _awaitingDetail = false;
+  String _lastAutoQuestion = '';
 
   bool _has1_5b = false;
   bool _has4b = false;
@@ -148,6 +178,8 @@ class Gpt2Engine {
 
     if (_has1_5b) {
       _fastEngine = await _spawnEngine(ModelVariant.fast);
+
+      // Regular fast-mode chat (1.5B mode - no length constraint)
       _fastChat = await _fastEngine!.createChat();
       _fastChat!.addSystem(
         'You are Clean Spirit AI, a friendly and helpful assistant. '
@@ -156,18 +188,43 @@ class Gpt2Engine {
         'Never use em dashes (use a hyphen or comma instead). '
         'Skip unnecessary disclaimers.',
       );
+
+      // Auto-mode draft chat - brief answers with detail offer
+      _autoDraftChat = await _fastEngine!.createChat();
+      _autoDraftChat!.addSystem(
+        'You are Clean Spirit AI. '
+        'Give a SHORT answer - maximum 4 to 5 lines or one paragraph. '
+        'Be direct and to the point. '
+        'Always end your reply with exactly this line: '
+        'Want me to describe this in more detail? '
+        'Never use em dashes - use a hyphen or comma instead. '
+        'No unnecessary disclaimers.',
+      );
     }
 
     if (_has4b) {
       _accurateEngine = await _spawnEngine(ModelVariant.accurate);
+
+      // Natural assistant chat - used when user explicitly picks 4B mode
       _accurateChat = await _accurateEngine!.createChat();
-      // System prompt tuned for the patch-only role in auto mode
       _accurateChat!.addSystem(
-        'You are a factual error checker. '
-        'When given a draft answer, you output ONLY a JSON array of corrections '
-        'in the format: [{"find":"exact text to replace","replace":"corrected text"}]. '
-        'If the draft is factually correct, output exactly: LGTM '
-        'No explanation, no preamble, no markdown fences - just the JSON array or LGTM.',
+        'You are Clean Spirit AI, a helpful and accurate assistant. '
+        'Give thorough, well-reasoned answers. '
+        'Never use em dashes - use a hyphen or comma instead. '
+        'Skip unnecessary disclaimers.',
+      );
+
+      // Verifier chat - patch-only persona, used exclusively in _dualPassStream
+      _verifierChat = await _accurateEngine!.createChat();
+      _verifierChat!.addSystem(
+        'You are a strict factual error checker. '
+        'Your default output is LGTM. '
+        'Only output a JSON patch if the draft contains a BLATANT, SIGNIFICANT factual error - '
+        'such as a wrong name, wrong date, wrong number, or completely false statement. '
+        'Do NOT flag: opinions, style, minor wording differences, missing context, or anything debatable. '
+        'If in doubt, output LGTM. '
+        'When you do patch, output ONLY a JSON array: [{"find":"...","replace":"..."}] '
+        'No explanation, no preamble, no markdown fences.',
       );
     }
 
@@ -210,12 +267,39 @@ class Gpt2Engine {
     String userText, {
     void Function(int phase)? onPhaseChange,
   }) {
+    // Detail expansion: user said yes/more detail after a brief auto reply
+    if (_activeModel == ActiveModel.auto && _awaitingDetail &&
+        _isDetailRequest(userText) && _lastAutoQuestion.isNotEmpty) {
+      _awaitingDetail = false;
+      // Ask 4B to give the full detailed answer for the original question
+      final detailPrompt =
+          'Please explain in full detail: $_lastAutoQuestion';
+      _lastAutoQuestion = '';
+      final stream = _streamMessage(detailPrompt, ModelVariant.accurate);
+      return (stream, ModelVariant.accurate);
+    }
+    // Any non-detail message resets the awaiting flag
+    _awaitingDetail = false;
+
     // Dual-pass only when auto mode AND the classifier says the message
     // actually needs factual accuracy. Simple greetings/small talk skip
     // straight to 1.5B with no fact-check overhead.
     if (_activeModel == ActiveModel.auto && _has1_5b && _has4b &&
         _needsAccurateModel(userText)) {
-      final stream = _dualPassStream(userText, onPhaseChange: onPhaseChange);
+      // Cache hit - drip the cached answer instantly
+      final cacheKey = userText.trim().toLowerCase();
+      if (_responseCache.containsKey(cacheKey)) {
+        final cached = _responseCache[cacheKey]!;
+        // Still set awaiting so cached answers also support detail expansion
+        _awaitingDetail = true;
+        _lastAutoQuestion = userText;
+        return (_fakeStream(cached), ModelVariant.accurate);
+      }
+      final stream = _dualPassStream(
+        userText,
+        onPhaseChange: onPhaseChange,
+        cacheKey: cacheKey,
+      );
       return (stream, ModelVariant.accurate);
     }
     final variant = resolveVariantForMessage(userText);
@@ -235,24 +319,25 @@ class Gpt2Engine {
   Stream<String> _dualPassStream(
     String userText, {
     void Function(int phase)? onPhaseChange,
+    String? cacheKey,
   }) async* {
-    if (_fastChat == null) {
+    if (_autoDraftChat == null) {
       yield* _streamMessage(userText, ModelVariant.accurate);
       return;
     }
-    if (_accurateChat == null) {
+    if (_verifierChat == null) {
       yield* _streamMessage(userText, ModelVariant.fast);
       return;
     }
 
-    // --- Phase 1: 1.5B drafts (silent) ---
+    // --- Phase 1: 1.5B brief draft (silent) ---
     onPhaseChange?.call(1);
 
     final draftBuffer = StringBuffer();
-    _fastChat!.addUser(userText);
+    _autoDraftChat!.addUser(userText);
 
-    await for (final event in _fastChat!.generate(
-      maxTokens: 1024,
+    await for (final event in _autoDraftChat!.generate(
+      maxTokens: 300, // enforce brevity at token level too
       sampler: const SamplerParams(temperature: 0.7, topP: 0.9),
     )) {
       switch (event) {
@@ -267,28 +352,36 @@ class Gpt2Engine {
 
     final draftAnswer = _stripThinkingTags(draftBuffer.toString());
 
-    // --- Phase 2: 4B outputs patch JSON only (very short output) ---
+    // --- Phase 2: 4B verifier outputs patch JSON only (capped short) ---
     onPhaseChange?.call(2);
 
-    // Keep the verifier prompt short - just the question and draft.
-    // The system prompt already explains the patch-only format.
     final verifierPrompt =
         'Question: $userText\n\n'
         'Draft:\n$draftAnswer\n\n'
-        'List factual errors as JSON patches, or output LGTM if correct.';
+        'Are there any BLATANT factual errors (wrong name, wrong date, completely false fact)? '
+        'If not - output LGTM. Only patch if you are certain something is significantly wrong.';
 
-    _accurateChat!.addUser(verifierPrompt);
+    _verifierChat!.addUser(verifierPrompt);
 
     final patchBuffer = StringBuffer();
+    int verifierTokens = 0;
+    const maxVerifierTokens = 128;
+    bool patchOverflow = false;
 
-    // 4B only needs to output a short JSON array or "LGTM" - cap at 256 tokens.
-    await for (final event in _accurateChat!.generate(
-      maxTokens: 256,
-      sampler: const SamplerParams(temperature: 0.1, topP: 0.9),
+    await for (final event in _verifierChat!.generate(
+      maxTokens: maxVerifierTokens,
+      // Greedy - structured JSON output needs no sampling
+      sampler: const SamplerParams(temperature: 0.0, topP: 1.0),
     )) {
       switch (event) {
         case TokenEvent():
           patchBuffer.write(event.text);
+          verifierTokens++;
+          // If the verifier is still going at 100 tokens, the draft was too bad
+          // to patch cleanly - mark overflow and bail early
+          if (verifierTokens >= 100) {
+            patchOverflow = true;
+          }
         case ShiftEvent():
           break;
         case DoneEvent():
@@ -296,11 +389,53 @@ class Gpt2Engine {
       }
     }
 
-    // Apply patches to the draft in Dart - instant, no more streaming from 4B
+    // Patch scope limiter: too many corrections = fall back to clean 4B reply
+    if (patchOverflow) {
+      onPhaseChange?.call(3);
+      final fallback = _streamMessage(userText, ModelVariant.accurate);
+      yield* fallback;
+      return;
+    }
+
+    // Apply patches to the draft in Dart
     final finalAnswer = _applyPatches(draftAnswer, patchBuffer.toString().trim());
 
-    // Yield the whole corrected answer in one shot
-    yield finalAnswer;
+    // Cache the result
+    _storeCached(cacheKey, finalAnswer);
+
+    // Clear phase indicator before dripping - generation is done
+    onPhaseChange?.call(3);
+
+    // Fake-stream the patched answer for a smooth reading experience
+    yield* _fakeStream(finalAnswer);
+
+    // After dripping, mark that we are waiting for a possible detail request
+    _awaitingDetail = true;
+    _lastAutoQuestion = userText;
+  }
+
+  /// Drip [text] character-group by character-group so the UI animates smoothly.
+  /// Adapts speed to answer length so long answers don't feel slow.
+  Stream<String> _fakeStream(String text) async* {
+    final totalChars = text.length;
+    final charsPerChunk = totalChars > 800 ? 6 : totalChars > 300 ? 4 : 3;
+    final chunkDelay = Duration(milliseconds: totalChars > 800 ? 25 : 35);
+
+    for (int i = 0; i < totalChars; i += charsPerChunk) {
+      final end = (i + charsPerChunk).clamp(0, totalChars);
+      yield text.substring(i, end);
+      if (end < totalChars) {
+        await Future.delayed(chunkDelay);
+      }
+    }
+  }
+
+  void _storeCached(String? key, String answer) {
+    if (key == null) return;
+    _responseCache[key] = answer;
+    if (_responseCache.length > _kCacheLimit) {
+      _responseCache.remove(_responseCache.keys.first);
+    }
   }
 
   /// Parses 4B's patch JSON and applies find/replace pairs to [draft].
@@ -376,7 +511,12 @@ class Gpt2Engine {
     await _accurateEngine?.dispose();
     _fastEngine = null;
     _fastChat = null;
+    _autoDraftChat = null;
     _accurateEngine = null;
     _accurateChat = null;
+    _verifierChat = null;
+    _responseCache.clear();
+    _awaitingDetail = false;
+    _lastAutoQuestion = '';
   }
 }

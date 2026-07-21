@@ -10,6 +10,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
+import 'package:wakelock_plus/wakelock_plus.dart';
+
 import 'chat_message.dart';
 import 'gpt2_engine.dart';
 import 'markdown_renderer.dart';
@@ -284,8 +286,7 @@ class _WelcomeView extends StatelessWidget {
     final hour = DateTime.now().hour;
     if (hour >= 5 && hour < 12) return 'Good morning';
     if (hour >= 12 && hour < 17) return 'Good afternoon';
-    if (hour >= 17 && hour < 21) return 'Good evening';
-    return 'Good night';
+    return 'Good evening'; // covers 17:00 onwards and late night
   }
 
   static const _suggestions = [
@@ -544,7 +545,10 @@ class _ChatScreenState extends State<ChatScreen> {
       text,
       onPhaseChange: (phase) {
         if (mounted) {
-          setState(() => _messages.last.autoPhase = phase);
+          setState(() {
+            // Phase 3 signals generation is done - clear the phase indicator
+            _messages.last.autoPhase = phase == 3 ? null : phase;
+          });
         }
       },
     );
@@ -563,6 +567,9 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _inputController.clear();
     _scrollToBottom();
+
+    // Keep screen on for the full generation - can take 30-90s on 4B
+    await WakelockPlus.enable();
 
     var raw = '';
 
@@ -593,6 +600,8 @@ class _ChatScreenState extends State<ChatScreen> {
         );
         _isGenerating = false;
       });
+      // Release wakelock - response is done
+      WakelockPlus.disable();
     }
   }
 
@@ -626,6 +635,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    WakelockPlus.disable(); // safety release if widget destroyed mid-generation
     _engine.dispose();
     _inputController.dispose();
     _scrollController.dispose();
