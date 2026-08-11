@@ -52,9 +52,15 @@ dependencies:
   permission_handler: ^11.3.0
 
   # Document text extraction
-  archive: ^3.6.0          # unzips DOCX (pure Dart)
-  xml: ^6.5.0              # parses word/document.xml inside DOCX
-  syncfusion_flutter_pdf: ^33.2.6  # PDF text layer extraction (community license)
+  # Upgraded from ^3.6.0 / ^6.5.0 - llama_cpp_dart -> image ^4.7.2 requires
+  # archive ^4.x and xml ^7.x; these versions satisfy both.
+  archive: ^4.0.9          # unzips DOCX (pure Dart)
+  xml: ^7.0.1              # parses word/document.xml inside DOCX
+
+  # PDF text extraction - pure Dart, no native deps, no Windows path-length issues.
+  # Replaces syncfusion_flutter_pdf which fails to resolve on Windows due to
+  # pub cache path length limits with deeply nested package names.
+  read_pdf_text: ^0.3.1
 
 dev_dependencies:
   flutter_test:
@@ -62,12 +68,13 @@ dev_dependencies:
   flutter_lints: ^4.0.0
 
 # ---------------------------------------------------------------------------
-# Dependency overrides
-# If llama_flutter_android local plugin is enabled above, add this:
+# Dependency overrides - force archive and xml to the versions required by
+# llama_cpp_dart -> image ^4.7.2. Without this, any transitive dep still
+# pinning archive ^3.x or xml ^6.x would break resolution.
 # ---------------------------------------------------------------------------
-# dependency_overrides:
-#   llama_flutter_android:
-#     path: local_plugins/llama_flutter_android
+dependency_overrides:
+  archive: ^4.0.9
+  xml: ^7.0.1
 
 flutter:
   uses-material-design: true

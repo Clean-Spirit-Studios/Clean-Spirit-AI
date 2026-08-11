@@ -3,21 +3,19 @@
 // Extracts plain text from document files (PDF, DOCX, and plain text formats)
 // so they can be fed into the local LLM as context.
 //
-// Ported from DocumentExtractorService in cross-platform-llm-client.
-//
 // Supported formats:
-//   Binary: .pdf (Syncfusion), .docx (archive + xml)
+//   Binary: .pdf (read_pdf_text - uses PdfBox on Android), .docx (archive + xml)
 //   Text:   .txt .md .json .csv .log .yaml .yml .xml
 //   Code:   .dart .kt .java .js .ts .py
 //
-// Note: Syncfusion Flutter PDF is community-licensed (free for revenue < $1M).
-// No license key or network call is needed for local text extraction.
+// read_pdf_text has a dead-simple API: getPDFtext(path) -> String.
+// No Windows pub-cache path-length issues, no native AAR to manage manually.
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
-import 'package:syncfusion_flutter_pdf/syncfusion_flutter_pdf.dart';
+import 'package:read_pdf_text/read_pdf_text.dart';
 import 'package:xml/xml.dart';
 
 /// Maximum characters returned for any document.
@@ -63,15 +61,15 @@ class DocumentExtractor {
     }
   }
 
-  /// Extract text from a PDF file using Syncfusion PDF.
+  /// Extract text from a PDF using read_pdf_text (PdfBox on Android).
+  /// Returns a plain string of all page text, or a fallback message if empty.
   static Future<String> _extractPdf(String path) async {
-    final bytes = await File(path).readAsBytes();
-    final document = PdfDocument(inputBytes: bytes);
     try {
-      final extractor = PdfTextExtractor(document);
-      return extractor.extractText();
-    } finally {
-      document.dispose();
+      final text = await ReadPdfText.getPDFtext(path);
+      final trimmed = text.trim();
+      return trimmed.isEmpty ? '[No extractable text found in PDF]' : trimmed;
+    } catch (e) {
+      return '[PDF extraction failed: $e]';
     }
   }
 

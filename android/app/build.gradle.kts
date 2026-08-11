@@ -9,10 +9,9 @@ android {
     namespace = "com.example.gpt2_chat"
     compileSdk = flutter.compileSdkVersion
 
-    // NDK 27 is required by the flutter_litert_lm native layer.
-    // Previously flutter.ndkVersion (~25) was used for llama-cpp-dart.
-    // Both llama_cpp_dart and flutter_litert_lm work with NDK 27.
-    ndkVersion = "27.0.12077973"
+    // NDK 28 is the highest version required across all plugins (jni requires 28.2.13676358).
+    // NDK versions are backward-compatible, so this satisfies flutter_litert_lm (27) too.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -36,6 +35,13 @@ android {
         release {
             // Signing with debug keys for now - replace with release keystore before publishing.
             signingConfig = signingConfigs.getByName("debug")
+
+            // R8 keep rules - suppresses missing JP2Decoder from PdfBox
+            // (JPEG2000 support is optional and not bundled on Android).
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }

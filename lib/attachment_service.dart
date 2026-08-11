@@ -2,6 +2,8 @@
 //
 // Handles picking images (camera / gallery) and documents (PDF, DOCX, text).
 // All methods return null on cancellation or permission denial.
+//
+// Uses file_picker ^11.x API - FilePicker static methods (no .platform getter).
 
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -55,9 +57,13 @@ class AttachmentService {
   /// Pick a document file.
   /// Returns a record with the file path, display name, and extension,
   /// or null if cancelled.
+  ///
+  /// file_picker v11 removed the .platform getter - use FilePicker.pickFiles()
+  /// directly as a static method. FilePickerResult is still returned the same way.
   static Future<({String path, String name, String ext})?> pickDocument() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      // file_picker ^11: call FilePicker.pickFiles() directly (no .platform).
+      final FilePickerResult? result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: [
           'pdf',
@@ -84,11 +90,12 @@ class AttachmentService {
       final file = result.files.first;
       if (file.path == null) return null;
 
-      return (
-        path: file.path!,
-        name: file.name,
-        ext: (file.extension ?? 'txt').toLowerCase(),
-      );
+      // Explicit typed record to avoid Dart inference issues with named fields.
+      final String filePath = file.path!;
+      final String fileName = file.name;
+      final String fileExt = (file.extension ?? 'txt').toLowerCase();
+
+      return (path: filePath, name: fileName, ext: fileExt);
     } catch (_) {
       return null;
     }
