@@ -8,7 +8,11 @@ plugins {
 android {
     namespace = "com.example.gpt2_chat"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+
+    // NDK 27 is required by the flutter_litert_lm native layer.
+    // Previously flutter.ndkVersion (~25) was used for llama-cpp-dart.
+    // Both llama_cpp_dart and flutter_litert_lm work with NDK 27.
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -20,16 +24,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.gpt2_chat"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // minSdk 26, required by the plain CPU-only llama-cpp-dart.aar.
-        // (We briefly tried bumping this to 31 for the Hexagon AAR's GPU
-        // path, but that AAR's OpenCL backend failed at runtime on real
-        // hardware with "libOpenCL.so not found" — most Android phones
-        // don't expose their GPU vendor's OpenCL driver to apps. Reverted
-        // to the CPU AAR, so this drops back down too.)
+        // minSdk 26 is required by LiteRT GPU (same as llama-cpp-dart CPU AAR).
         minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -38,18 +34,20 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Signing with debug keys for now - replace with release keystore before publishing.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
 }
 
 dependencies {
-    // llama_cpp_dart's native binary — download from
-    // https://github.com/netdur/llama_cpp_dart/releases and place at
-    // android/app/libs/llama-cpp-dart.aar (see README.md "Native library setup").
+    // llama-cpp-dart.aar is still needed for Qwen3 4B (GGUF path).
+    // Download from https://github.com/netdur/llama_cpp_dart/releases
+    // and place at android/app/libs/llama-cpp-dart.aar
     implementation(files("libs/llama-cpp-dart.aar"))
+
+    // flutter_litert_lm brings its own native AAR via its own build.gradle.
+    // No extra implementation() line needed here for LiteRT.
 }
 
 flutter {

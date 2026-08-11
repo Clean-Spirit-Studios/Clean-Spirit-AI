@@ -1,13 +1,14 @@
 // download_screen.dart
 //
 // Shown on first app launch before the chat screen.
-// Step 1: user picks which model(s) to download.
+//
+// Step 1: user picks which model(s) to download - with clear architecture info.
 // Step 2: connectivity check (warn on mobile data).
 // Step 3: download with live progress bar.
 //
-// Option 1 - 1.5B (Faster, Less Accurate)  ~900 MB
-// Option 2 - 4B   (Slower, More Accurate)  ~2.5 GB
-// Option 3 - Download both
+// Option 1 - Gemma 4 E2B (LiteRT - GPU - fast, vision-capable)     ~2.46 GB
+// Option 2 - Qwen3 4B    (GGUF - CPU - thorough reasoning)          ~2.5 GB
+// Option 3 - Download Both                                           ~5 GB
 
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -37,16 +38,21 @@ class _DownloadScreenState extends State<DownloadScreen> {
   int? _totalBytes;
   String? _errorText;
 
-  // Which models the user chose to download (null = not yet chosen)
   List<ModelVariant>? _modelsToDownload;
   int _currentDownloadIndex = 0;
 
-  String get _choiceLabel {
+  String get _currentVariantLabel {
     if (_modelsToDownload == null) return '';
-    if (_modelsToDownload!.length == 2) return 'Both models';
-    return _modelsToDownload!.first == ModelVariant.fast
-        ? 'QWEN2.5 1.5B'
-        : 'QWEN3 4B';
+    final v = _modelsToDownload![_currentDownloadIndex];
+    return v == ModelVariant.gemma ? 'Gemma 4 E2B (LiteRT)' : 'Qwen3 4B (GGUF)';
+  }
+
+  String get _sizeWarningText {
+    if (_modelsToDownload == null) return '';
+    if (_modelsToDownload!.length == 2) return 'approximately 5 GB combined';
+    return _modelsToDownload!.first == ModelVariant.gemma
+        ? 'approximately 2.46 GB'
+        : 'approximately 2.5 GB';
   }
 
   void _onModelChosen(List<ModelVariant> variants) {
@@ -91,10 +97,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
       _errorText = null;
     });
 
-    // Keep screen on for the duration of the download - it can take several
-    // minutes on a slow connection and we don't want it interrupted by sleep.
     WakelockPlus.enable();
-
     _fetchSizeAndDownloadNext();
   }
 
@@ -104,8 +107,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
 
     final variant = _modelsToDownload![_currentDownloadIndex];
 
-    // Fire-and-forget size fetch for display
-    ModelLoader.fetchTotalSizeBytes(variant: variant).then((bytes) {
+    ModelLoader.fetchTotalSizeBytes(variant).then((bytes) {
       if (mounted && bytes != null) {
         setState(() => _totalBytes = bytes);
       }
@@ -121,7 +123,6 @@ class _DownloadScreenState extends State<DownloadScreen> {
       if (!mounted) return;
       _currentDownloadIndex++;
       if (_currentDownloadIndex < (_modelsToDownload?.length ?? 0)) {
-        // Start next model
         setState(() {
           _fraction = 0.0;
           _totalBytes = null;
@@ -148,17 +149,12 @@ class _DownloadScreenState extends State<DownloadScreen> {
     return '${(mb / 1024).toStringAsFixed(2)} GB';
   }
 
-  String get _downloadingTitle {
-    if (_modelsToDownload == null) return '';
-    final current = _modelsToDownload![_currentDownloadIndex];
-    final label = current == ModelVariant.fast ? 'QWEN2.5 1.5B' : 'QWEN3 4B';
-    return 'Downloading $label...';
-  }
-
   String get _downloadingStepLabel {
     if (_modelsToDownload == null) return '';
     final total = _modelsToDownload!.length;
-    return 'Step ${_currentDownloadIndex + 1} of $total';
+    return total > 1
+        ? 'Model ${_currentDownloadIndex + 1} of $total'
+        : 'One-time download';
   }
 
   @override
@@ -189,8 +185,6 @@ class _DownloadScreenState extends State<DownloadScreen> {
         );
 
       case _Stage.confirmingMobileData:
-        final isLarge = _modelsToDownload?.length == 2 ||
-            _modelsToDownload?.first == ModelVariant.accurate;
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -203,8 +197,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'The ${isLarge ? "selected models are" : "selected model is"} '
-              '${_modelsToDownload?.length == 2 ? "~3.5GB combined" : _modelsToDownload?.first == ModelVariant.accurate ? "~2.5GB" : "~900MB"}. '
+              'The selected model is $_sizeWarningText. '
               'Downloading over mobile data may use a large chunk of your data plan. '
               'This only happens once - after this, the app works fully offline.',
               textAlign: TextAlign.center,
@@ -214,7 +207,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 OutlinedButton(
-                  onPressed: _checkConnectionThenStart,
+                  onPressed: () =>
+                      setState(() => _stage = _Stage.choosingModel),
                   child: const Text('Wait for Wi-Fi'),
                 ),
                 const SizedBox(width: 12),
@@ -229,15 +223,16 @@ class _DownloadScreenState extends State<DownloadScreen> {
 
       case _Stage.downloading:
         final theme = Theme.of(context);
-        final received =
-            _totalBytes != null ? (_fraction * _totalBytes!).round() : null;
+        final received = _totalBytes != null
+            ? (_fraction * _totalBytes!).round()
+            : null;
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.download, size: 40),
             const SizedBox(height: 16),
             Text(
-              _downloadingTitle,
+              'Downloading $_currentVariantLabel...',
               style:
                   const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
               textAlign: TextAlign.center,
@@ -305,13 +300,21 @@ class _DownloadScreenState extends State<DownloadScreen> {
               onPressed: _checkConnectionThenStart,
               child: const Text('Retry'),
             ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => setState(() => _stage = _Stage.choosingModel),
+              child: const Text('Back to model selection'),
+            ),
           ],
         );
     }
   }
 }
 
-/// Step 1: let the user pick which model to download.
+// ---------------------------------------------------------------------------
+// Step 1: model chooser - architecture is clearly explained
+// ---------------------------------------------------------------------------
+
 class _ModelChooser extends StatelessWidget {
   final void Function(List<ModelVariant> variants) onChosen;
 
@@ -322,92 +325,107 @@ class _ModelChooser extends StatelessWidget {
     final theme = Theme.of(context);
     final accent = theme.colorScheme.primary;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Icon + heading
-        Icon(Icons.smart_toy_outlined, size: 52, color: accent),
-        const SizedBox(height: 16),
-        const Text(
-          'Welcome to Clean Spirit AI',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Choose which AI model to download. Once downloaded, '
-          'everything runs fully offline on your device.',
-          style: TextStyle(
-            fontSize: 14,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Icon(Icons.smart_toy_outlined, size: 52, color: accent),
+          const SizedBox(height: 16),
+          const Text(
+            'Welcome to Clean Spirit AI',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+            textAlign: TextAlign.center,
           ),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 32),
-
-        // Option 1
-        _OptionCard(
-          number: '1',
-          title: '1.5B (Faster, Less Accurate)',
-          subtitle: 'Great for quick chats, simple questions, and everyday '
-              'conversations. Uses less storage (~900MB).',
-          icon: Icons.bolt,
-          onTap: () => onChosen([ModelVariant.fast]),
-        ),
-        const SizedBox(height: 12),
-
-        // Option 2
-        _OptionCard(
-          number: '2',
-          title: '4B (Slower, More Accurate)',
-          subtitle: 'Better for detailed explanations, math, coding, and '
-              'factual tasks. Requires more storage (~2.5GB).',
-          icon: Icons.psychology,
-          onTap: () => onChosen([ModelVariant.accurate]),
-        ),
-        const SizedBox(height: 12),
-
-        // Option 3
-        _OptionCard(
-          number: '3',
-          title: 'Download Both',
-          subtitle: 'Enables Auto Switch - the app automatically picks the '
-              'right model for each message. Requires ~3.5GB storage.',
-          icon: Icons.swap_horiz,
-          highlight: true,
-          badge: 'Recommended',
-          onTap: () => onChosen([ModelVariant.fast, ModelVariant.accurate]),
-        ),
-
-        const SizedBox(height: 24),
-        Text(
-          'You can download the other model later from settings.',
-          style: TextStyle(
-            fontSize: 12,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+          const SizedBox(height: 8),
+          Text(
+            'Choose which AI model to download. Both run fully offline '
+            'on your device after the one-time download.',
+            style: TextStyle(
+              fontSize: 14,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+            ),
+            textAlign: TextAlign.center,
           ),
-          textAlign: TextAlign.center,
-        ),
-      ],
+          const SizedBox(height: 32),
+
+          // Gemma - LiteRT
+          _OptionCard(
+            archBadge: 'LiteRT',
+            archColor: Colors.tealAccent.shade400,
+            icon: Icons.bolt,
+            title: 'Gemma 4 E2B - GPU (LiteRT)',
+            sizeLabel: '~2.46 GB',
+            subtitle:
+                'Google\'s model running on your phone\'s GPU via the LiteRT engine. '
+                'Fast, vision-capable (understands images), and ideal for everyday chat.',
+            highlight: true,
+            badge: 'Recommended',
+            onTap: () => onChosen([ModelVariant.gemma]),
+          ),
+          const SizedBox(height: 12),
+
+          // Qwen3 4B - GGUF
+          _OptionCard(
+            archBadge: 'GGUF',
+            archColor: Colors.orangeAccent.shade400,
+            icon: Icons.psychology,
+            title: 'Qwen3 4B - CPU (GGUF)',
+            sizeLabel: '~2.5 GB',
+            subtitle:
+                'Alibaba\'s Qwen3 4B model running on your CPU via the GGUF/llama.cpp engine. '
+                'Slower but strong at detailed reasoning, math, and coding.',
+            onTap: () => onChosen([ModelVariant.qwen4b]),
+          ),
+          const SizedBox(height: 12),
+
+          // Both
+          _OptionCard(
+            archBadge: 'Both',
+            archColor: accent,
+            icon: Icons.swap_horiz,
+            title: 'Download Both',
+            sizeLabel: '~5 GB',
+            subtitle:
+                'Enables Auto mode - defaults to Gemma (LiteRT GPU) for speed, '
+                'with Qwen3 4B (GGUF CPU) available for heavy reasoning tasks.',
+            onTap: () =>
+                onChosen([ModelVariant.gemma, ModelVariant.qwen4b]),
+          ),
+
+          const SizedBox(height: 24),
+          Text(
+            'You can download the other model later from within the app.',
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
     );
   }
 }
 
 class _OptionCard extends StatelessWidget {
-  final String number;
-  final String title;
-  final String subtitle;
+  final String archBadge;
+  final Color archColor;
   final IconData icon;
+  final String title;
+  final String sizeLabel;
+  final String subtitle;
   final VoidCallback onTap;
   final bool highlight;
   final String? badge;
 
   const _OptionCard({
-    required this.number,
-    required this.title,
-    required this.subtitle,
+    required this.archBadge,
+    required this.archColor,
     required this.icon,
+    required this.title,
+    required this.sizeLabel,
+    required this.subtitle,
     required this.onTap,
     this.highlight = false,
     this.badge,
@@ -430,24 +448,18 @@ class _OptionCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              // Number badge
+              // Arch badge circle
               Container(
-                width: 36,
-                height: 36,
+                width: 42,
+                height: 42,
                 decoration: BoxDecoration(
-                  color: highlight ? accent : theme.colorScheme.surface,
+                  color: archColor.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
+                  border: Border.all(
+                      color: archColor.withValues(alpha: 0.35), width: 1),
                 ),
                 child: Center(
-                  child: Text(
-                    number,
-                    style: TextStyle(
-                      color:
-                          highlight ? theme.colorScheme.onPrimary : accent,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
-                    ),
-                  ),
+                  child: Icon(icon, size: 20, color: archColor),
                 ),
               ),
               const SizedBox(width: 14),
@@ -455,16 +467,33 @@ class _OptionCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Title row
                     Row(
                       children: [
-                        Icon(icon, size: 16, color: accent),
-                        const SizedBox(width: 6),
-                        Expanded(
+                        Flexible(
                           child: Text(
                             title,
                             style: const TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 14,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: archColor.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            archBadge,
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: archColor,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.3,
                             ),
                           ),
                         ),
@@ -489,12 +518,23 @@ class _OptionCard extends StatelessWidget {
                         ],
                       ],
                     ),
+                    const SizedBox(height: 2),
+                    // Size label
+                    Text(
+                      sizeLabel,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: archColor.withValues(alpha: 0.85),
+                      ),
+                    ),
                     const SizedBox(height: 4),
                     Text(
                       subtitle,
                       style: TextStyle(
                         fontSize: 12,
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                        color: theme.colorScheme.onSurface
+                            .withValues(alpha: 0.65),
                         height: 1.4,
                       ),
                     ),
@@ -502,7 +542,8 @@ class _OptionCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Icon(Icons.arrow_forward_ios, size: 14,
+              Icon(Icons.arrow_forward_ios,
+                  size: 14,
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.4)),
             ],
           ),

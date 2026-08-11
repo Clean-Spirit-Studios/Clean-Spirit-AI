@@ -6,16 +6,17 @@ import 'download_screen.dart';
 import 'model_loader.dart';
 
 void main() {
-  runApp(const Gpt2ChatApp());
+  runApp(const CleanSpiritApp());
 }
 
-class Gpt2ChatApp extends StatelessWidget {
-  const Gpt2ChatApp({super.key});
+class CleanSpiritApp extends StatelessWidget {
+  const CleanSpiritApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Clean Spirit AI',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: Colors.deepPurple,
@@ -26,9 +27,9 @@ class Gpt2ChatApp extends StatelessWidget {
   }
 }
 
-/// Decides, on every cold start, whether to show the one-time download
-/// flow or go straight to the chat screen. At least one model must be
-/// present to skip the download flow.
+/// Decides on every cold start whether to show the one-time download flow
+/// or go straight to the chat screen. At least one model must be present
+/// to skip the download flow.
 class _AppRoot extends StatefulWidget {
   const _AppRoot();
 
@@ -48,8 +49,7 @@ class _AppRootState extends State<_AppRoot> {
   }
 
   Future<void> _check() async {
-    // isModelDownloaded() returns true if at least one model is on disk
-    final downloaded = await ModelLoader.isModelDownloaded();
+    final downloaded = await ModelLoader.isAnyModelDownloaded();
     if (!mounted) return;
     setState(() {
       _state = downloaded ? _RootState.ready : _RootState.needsDownload;

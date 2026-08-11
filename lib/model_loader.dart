@@ -1,11 +1,12 @@
 // model_loader.dart
 //
-// Responsible for getting the GGUF model files onto the device and giving
-// back plain filesystem paths llama_cpp_dart's LlamaEngine can open.
+// Manages two models across two architectures:
 //
-// Supports two models:
-//   - QWEN2.5 1.5B: faster, less accurate - for simple conversational tasks
-//   - QWEN3 4B:     slower, more accurate - for complex tasks, facts, math
+//   Gemma 4 E2B Instruct (LiteRT-LM)  - GPU-accelerated, vision-capable, fast
+//     File: gemma-4-E2B-it.litertlm (~2.46 GB)
+//
+//   Qwen3 4B Instruct (GGUF)           - CPU-based, thorough, accurate
+//     File: Qwen3-4B-Instruct-2507-Q4_K_M.gguf (~2.5 GB)
 //
 // Models are downloaded into app-private storage on first launch.
 // After download the app is fully offline.
@@ -15,23 +16,41 @@ import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:resumable_downloader/resumable_downloader.dart';
 
-// ---- 1.5B model (QWEN2.5) ------------------------------------------------
-// NOTE: The official Qwen/Qwen2.5-1.5B-Instruct-GGUF repo uses Xet storage
-// which resumable_downloader cannot handle (stalls at 0%). The bartowski
-// mirror serves the identical file as a plain HTTP download.
-const String kModel1_5bFileName = 'Qwen2.5-1.5B-Instruct-Q4_K_M.gguf';
-const String kModel1_5bDownloadUrl =
-    'https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/$kModel1_5bFileName?download=true';
+// ---------------------------------------------------------------------------
+// Gemma 4 E2B Instruct (LiteRT-LM)
+// ---------------------------------------------------------------------------
 
-// ---- 4B model (QWEN3) -----------------------------------------------------
-const String kModel4bFileName = 'Qwen3-4B-Instruct-2507-Q4_K_M.gguf';
-const String kModel4bDownloadUrl =
-    'https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/$kModel4bFileName?download=true';
+const String kGemmaFileName = 'gemma-4-E2B-it.litertlm';
+const String kGemmaDownloadUrl =
+    'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm'
+    '/resolve/main/gemma-4-E2B-it.litertlm?download=true';
+const String kGemmaSizeLabel = '2.46 GB';
 
-// Legacy alias so gpt2_engine.dart compiles without changes.
-const String kModelFileName = kModel4bFileName;
+// ---------------------------------------------------------------------------
+// Qwen3 4B Instruct (GGUF)
+// ---------------------------------------------------------------------------
 
-enum ModelVariant { fast, accurate }
+const String kQwen4bFileName = 'Qwen3-4B-Instruct-2507-Q4_K_M.gguf';
+const String kQwen4bDownloadUrl =
+    'https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/'
+    'Qwen3-4B-Instruct-2507-Q4_K_M.gguf?download=true';
+const String kQwen4bSizeLabel = '2.5 GB';
+
+// ---------------------------------------------------------------------------
+// Enum
+// ---------------------------------------------------------------------------
+
+enum ModelVariant {
+  /// Gemma 4 E2B Instruct via LiteRT - GPU-accelerated, vision-capable
+  gemma,
+
+  /// Qwen3 4B Instruct via GGUF/llama_cpp_dart - CPU, thorough answers
+  qwen4b,
+}
+
+// ---------------------------------------------------------------------------
+// ModelLoader
+// ---------------------------------------------------------------------------
 
 class ModelLoader {
   static DownloadManager? _downloadManager;
@@ -50,54 +69,50 @@ class ModelLoader {
 
   // ---- existence checks ---------------------------------------------------
 
-  static Future<bool> isModel1_5bDownloaded() async {
+  static Future<bool> isGemmaDownloaded() async {
     final appDir = await getApplicationDocumentsDirectory();
-    return File('${appDir.path}/models/$kModel1_5bFileName').exists();
+    return File('${appDir.path}/models/$kGemmaFileName').exists();
   }
 
-  static Future<bool> isModel4bDownloaded() async {
+  static Future<bool> isQwen4bDownloaded() async {
     final appDir = await getApplicationDocumentsDirectory();
-    return File('${appDir.path}/models/$kModel4bFileName').exists();
+    return File('${appDir.path}/models/$kQwen4bFileName').exists();
   }
 
   /// True when at least one model is present (enough to show the chat screen).
-  static Future<bool> isModelDownloaded() async {
-    return await isModel1_5bDownloaded() || await isModel4bDownloaded();
+  static Future<bool> isAnyModelDownloaded() async {
+    return await isGemmaDownloaded() || await isQwen4bDownloaded();
   }
 
   // ---- path resolution ----------------------------------------------------
 
-  static Future<String> resolveModelPath({
-    ModelVariant variant = ModelVariant.accurate,
-  }) async {
+  static Future<String> resolveGemmaPath() async {
     final appDir = await getApplicationDocumentsDirectory();
-
-    if (variant == ModelVariant.fast) {
-      final file = File('${appDir.path}/models/$kModel1_5bFileName');
-      if (await file.exists()) return file.path;
-      // Fall back to the 4B model if the 1.5B hasn't been downloaded.
-      final fallback = File('${appDir.path}/models/$kModel4bFileName');
-      if (await fallback.exists()) return fallback.path;
-      throw ModelNotFoundException(file.path);
-    } else {
-      final file = File('${appDir.path}/models/$kModel4bFileName');
-      if (await file.exists()) return file.path;
-      // Fall back to the 1.5B model if the 4B hasn't been downloaded.
-      final fallback = File('${appDir.path}/models/$kModel1_5bFileName');
-      if (await fallback.exists()) return fallback.path;
-      throw ModelNotFoundException(file.path);
-    }
+    final file = File('${appDir.path}/models/$kGemmaFileName');
+    if (await file.exists()) return file.path;
+    throw ModelNotFoundException(file.path);
   }
 
-  // ---- size queries (cosmetic only) ---------------------------------------
+  static Future<String> resolveQwen4bPath() async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final file = File('${appDir.path}/models/$kQwen4bFileName');
+    if (await file.exists()) return file.path;
+    throw ModelNotFoundException(file.path);
+  }
 
-  static Future<int?> fetchTotalSizeBytes({
-    ModelVariant variant = ModelVariant.accurate,
-  }) async {
+  static Future<String> resolveModelPath(ModelVariant variant) async {
+    return variant == ModelVariant.gemma
+        ? resolveGemmaPath()
+        : resolveQwen4bPath();
+  }
+
+  // ---- size queries -------------------------------------------------------
+
+  static Future<int?> fetchTotalSizeBytes(ModelVariant variant) async {
     try {
-      final url = variant == ModelVariant.fast
-          ? kModel1_5bDownloadUrl
-          : kModel4bDownloadUrl;
+      final url = variant == ModelVariant.gemma
+          ? kGemmaDownloadUrl
+          : kQwen4bDownloadUrl;
       final dio = Dio();
       final response = await dio.head(url);
       final lengthHeader = response.headers.value('content-length');
@@ -111,16 +126,16 @@ class ModelLoader {
   // ---- downloads ----------------------------------------------------------
 
   static Future<void> downloadModel({
+    required ModelVariant variant,
     required void Function(double fraction) onProgress,
-    ModelVariant variant = ModelVariant.accurate,
   }) async {
     final manager = await _manager();
-    final url = variant == ModelVariant.fast
-        ? kModel1_5bDownloadUrl
-        : kModel4bDownloadUrl;
-    final fileName = variant == ModelVariant.fast
-        ? kModel1_5bFileName
-        : kModel4bFileName;
+    final url = variant == ModelVariant.gemma
+        ? kGemmaDownloadUrl
+        : kQwen4bDownloadUrl;
+    final fileName = variant == ModelVariant.gemma
+        ? kGemmaFileName
+        : kQwen4bFileName;
 
     await manager.getFile(
       QueueItem(
@@ -138,8 +153,14 @@ class ModelLoader {
     manager.cancelAll();
   }
 
+  // ---- Android native library ---------------------------------------------
+
   static String androidLibraryBasename() => 'libllama.so';
 }
+
+// ---------------------------------------------------------------------------
+// Exceptions
+// ---------------------------------------------------------------------------
 
 class ModelNotFoundException implements Exception {
   final String expectedPath;
@@ -147,6 +168,6 @@ class ModelNotFoundException implements Exception {
 
   @override
   String toString() =>
-      'AI model file not found at $expectedPath - it needs to be '
-      'downloaded first via ModelLoader.downloadModel().';
+      'AI model file not found at $expectedPath. '
+      'It needs to be downloaded first via ModelLoader.downloadModel().';
 }
