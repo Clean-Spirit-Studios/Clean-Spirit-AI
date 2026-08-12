@@ -1,19 +1,22 @@
 // download_screen.dart
 //
 // Shown on first app launch before the chat screen.
+// Feature 4 - full visual redesign with modern card layout, circular progress
+// ring, and polished state treatment for all 5 stages.
 //
-// Step 1: user picks which model(s) to download - with clear architecture info.
-// Step 2: connectivity check (warn on mobile data).
-// Step 3: download with live progress bar.
-//
-// Option 1 - Gemma 4 E2B (LiteRT - GPU - fast, vision-capable)     ~2.46 GB
-// Option 2 - Qwen3 4B    (GGUF - CPU - thorough reasoning)          ~2.5 GB
-// Option 3 - Download Both                                           ~5 GB
+// Stage 1: choosingModel   - branded hero + model cards
+// Stage 2: checkingConnection
+// Stage 3: confirmingMobileData - orange-bordered warning card
+// Stage 4: downloading      - circular progress ring + byte counter
+// Stage 5: error            - red icon + resume notice
+
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import 'chat_screen.dart' show _AppLogo;
 import 'model_loader.dart';
 
 class DownloadScreen extends StatefulWidget {
@@ -67,8 +70,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
     final hasWifi = connectivity.contains(ConnectivityResult.wifi) ||
         connectivity.contains(ConnectivityResult.ethernet);
     final hasMobile = connectivity.contains(ConnectivityResult.mobile);
-    final hasNone = connectivity.contains(ConnectivityResult.none) ||
-        connectivity.isEmpty;
+    final hasNone =
+        connectivity.contains(ConnectivityResult.none) || connectivity.isEmpty;
 
     if (hasNone) {
       setState(() {
@@ -108,9 +111,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
     final variant = _modelsToDownload![_currentDownloadIndex];
 
     ModelLoader.fetchTotalSizeBytes(variant).then((bytes) {
-      if (mounted && bytes != null) {
-        setState(() => _totalBytes = bytes);
-      }
+      if (mounted && bytes != null) setState(() => _totalBytes = bytes);
     });
 
     ModelLoader.downloadModel(
@@ -161,9 +162,17 @@ class _DownloadScreenState extends State<DownloadScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Center(child: _buildContent()),
+        child: CustomScrollView(
+          slivers: [
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 24, vertical: 32),
+                child: Center(child: _buildContent()),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -175,144 +184,352 @@ class _DownloadScreenState extends State<DownloadScreen> {
         return _ModelChooser(onChosen: _onModelChosen);
 
       case _Stage.checkingConnection:
-        return const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Checking connection...'),
-          ],
-        );
+        return _buildCheckingConnection();
 
       case _Stage.confirmingMobileData:
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.signal_cellular_alt, size: 40),
-            const SizedBox(height: 16),
-            const Text(
-              "You're on mobile data",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'The selected model is $_sizeWarningText. '
-              'Downloading over mobile data may use a large chunk of your data plan. '
-              'This only happens once - after this, the app works fully offline.',
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                OutlinedButton(
-                  onPressed: () =>
-                      setState(() => _stage = _Stage.choosingModel),
-                  child: const Text('Wait for Wi-Fi'),
-                ),
-                const SizedBox(width: 12),
-                FilledButton(
-                  onPressed: _startDownload,
-                  child: const Text('Download anyway'),
-                ),
-              ],
-            ),
-          ],
-        );
+        return _buildMobileDataCard();
 
       case _Stage.downloading:
-        final theme = Theme.of(context);
-        final received = _totalBytes != null
-            ? (_fraction * _totalBytes!).round()
-            : null;
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.download, size: 40),
-            const SizedBox(height: 16),
-            Text(
-              'Downloading $_currentVariantLabel...',
-              style:
-                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 2),
-            Text(
-              _downloadingStepLabel,
-              style: TextStyle(
-                fontSize: 13,
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'One-time download - the app works fully offline after this.',
-              style: TextStyle(fontSize: 12),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: LinearProgressIndicator(value: _fraction, minHeight: 10),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _totalBytes != null
-                  ? '${_formatBytes(received!)} / ${_formatBytes(_totalBytes!)}  (${(_fraction * 100).toStringAsFixed(0)}%)'
-                  : '${(_fraction * 100).toStringAsFixed(0)}%',
-            ),
-            const SizedBox(height: 24),
-            TextButton(
-              onPressed: () async {
-                await ModelLoader.cancelDownload();
-                WakelockPlus.disable();
-                if (mounted) {
-                  setState(() => _stage = _Stage.error);
-                }
-              },
-              child: const Text('Cancel'),
-            ),
-          ],
-        );
+        return _buildDownloadingState();
 
       case _Stage.error:
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 40, color: Colors.redAccent),
-            const SizedBox(height: 16),
-            Text(
-              _errorText ?? 'Something went wrong.',
-              textAlign: TextAlign.center,
+        return _buildErrorState();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Checking connection state
+  // ---------------------------------------------------------------------------
+
+  Widget _buildCheckingConnection() {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 48,
+          height: 48,
+          child: CircularProgressIndicator(strokeWidth: 3, color: accent),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          'Checking connection...',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: theme.colorScheme.onSurface,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mobile data warning card
+  // ---------------------------------------------------------------------------
+
+  Widget _buildMobileDataCard() {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.orangeAccent.withValues(alpha: 0.45),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: Colors.orangeAccent.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
             ),
-            const SizedBox(height: 8),
-            if (_fraction > 0)
-              const Text(
-                "Don't worry - what's already downloaded will resume from "
-                "where it left off.",
-                style: TextStyle(fontSize: 12),
-                textAlign: TextAlign.center,
+            child: Icon(
+              Icons.signal_cellular_alt_rounded,
+              size: 30,
+              color: Colors.orangeAccent.shade400,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Mobile data detected',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: theme.colorScheme.onSurface,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'The selected model is $_sizeWarningText. '
+            'After this one-time download, the app works fully offline.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.5,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+            ),
+          ),
+          const SizedBox(height: 28),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () =>
+                      setState(() => _stage = _Stage.choosingModel),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('Wait for Wi-Fi'),
+                ),
               ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: _checkConnectionThenStart,
-              child: const Text('Retry'),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: _startDownload,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('Download anyway'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Downloading state - circular progress ring
+  // ---------------------------------------------------------------------------
+
+  Widget _buildDownloadingState() {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+    final received = _totalBytes != null
+        ? (_fraction * _totalBytes!).round()
+        : null;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Circular progress ring with percentage
+        SizedBox(
+          width: 108,
+          height: 108,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Track ring
+              SizedBox.expand(
+                child: Transform.rotate(
+                  angle: -math.pi / 2,
+                  child: CircularProgressIndicator(
+                    value: _fraction > 0 ? _fraction : null,
+                    strokeWidth: 7,
+                    backgroundColor:
+                        theme.colorScheme.surfaceContainerHighest,
+                    color: accent,
+                    strokeCap: StrokeCap.round,
+                  ),
+                ),
+              ),
+              // Percentage label
+              Text(
+                '${(_fraction * 100).toStringAsFixed(0)}%',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 28),
+        Text(
+          'Downloading $_currentVariantLabel',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: theme.colorScheme.onSurface,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _downloadingStepLabel,
+          style: TextStyle(
+            fontSize: 13,
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+          ),
+        ),
+        if (received != null && _totalBytes != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            '${_formatBytes(received)} of ${_formatBytes(_totalBytes!)}',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
             ),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: () => setState(() => _stage = _Stage.choosingModel),
-              child: const Text('Back to model selection'),
+          ),
+        ],
+        const SizedBox(height: 6),
+        Text(
+          'Keep the app open - one-time download only.',
+          style: TextStyle(
+            fontSize: 12,
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 32),
+        // Linear bar as secondary indicator
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: LinearProgressIndicator(
+            value: _fraction > 0 ? _fraction : null,
+            minHeight: 6,
+            backgroundColor: theme.colorScheme.surfaceContainerHighest,
+            color: accent,
+          ),
+        ),
+        const SizedBox(height: 28),
+        TextButton(
+          onPressed: () async {
+            await ModelLoader.cancelDownload();
+            WakelockPlus.disable();
+            if (mounted) setState(() => _stage = _Stage.error);
+          },
+          child: Text(
+            'Cancel',
+            style: TextStyle(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Error state
+  // ---------------------------------------------------------------------------
+
+  Widget _buildErrorState() {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: Colors.redAccent.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.error_outline_rounded,
+              size: 32,
+              color: Colors.redAccent,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Something went wrong',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: theme.colorScheme.onSurface,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _errorText ?? 'An unknown error occurred.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.5,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+            ),
+          ),
+          if (_fraction > 0) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.green.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: Colors.green.withValues(alpha: 0.2)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.save_alt_rounded,
+                      size: 14, color: Colors.green),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      'Progress saved - download will resume from ${(_fraction * 100).toStringAsFixed(0)}%.',
+                      style: const TextStyle(
+                          fontSize: 12, color: Colors.green),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
-        );
-    }
+          const SizedBox(height: 28),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Try again'),
+              onPressed: _checkConnectionThenStart,
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => setState(() => _stage = _Stage.choosingModel),
+            child: const Text('Back to model selection'),
+          ),
+        ],
+      ),
+    );
   }
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: model chooser - architecture is clearly explained
+// Step 1: model chooser - redesigned with hero section
 // ---------------------------------------------------------------------------
 
 class _ModelChooser extends StatelessWidget {
@@ -323,107 +540,122 @@ class _ModelChooser extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final accent = theme.colorScheme.primary;
 
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Icon(Icons.smart_toy_outlined, size: 52, color: accent),
-          const SizedBox(height: 16),
-          const Text(
-            'Welcome to Clean Spirit AI',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Choose which AI model to download. Both run fully offline '
-            'on your device after the one-time download.',
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Hero section - app logo + tagline
+        const SizedBox(height: 16),
+        const Center(child: _AppLogo()),  // _AppLogo is not const - fix below
+
+        const SizedBox(height: 10),
+        Center(
+          child: Text(
+            'Private AI, on your device.',
             style: TextStyle(
-              fontSize: 14,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+              fontSize: 13,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+              letterSpacing: 0.2,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Center(
+          child: Text(
+            'Choose a model to download. Both run fully offline after the\none-time download.',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.5,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
             ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 32),
+        ),
+        const SizedBox(height: 32),
 
-          // Gemma - LiteRT
-          _OptionCard(
-            archBadge: 'LiteRT',
-            archColor: Colors.tealAccent.shade400,
-            icon: Icons.bolt,
-            title: 'Gemma 4 E2B - GPU (LiteRT)',
-            sizeLabel: '~2.46 GB',
-            subtitle:
-                'Google\'s model running on your phone\'s GPU via the LiteRT engine. '
-                'Fast, vision-capable (understands images), and ideal for everyday chat.',
-            highlight: true,
-            badge: 'Recommended',
-            onTap: () => onChosen([ModelVariant.gemma]),
-          ),
-          const SizedBox(height: 12),
+        // Gemma - LiteRT
+        _ModelCard(
+          archBadge: 'LiteRT',
+          archColor: Colors.tealAccent.shade400,
+          icon: Icons.bolt,
+          title: 'Gemma 4 E2B',
+          engineLabel: 'GPU - LiteRT',
+          sizeLabel: '~2.46 GB',
+          subtitle:
+              'Google\'s model on your phone\'s GPU. Fast, vision-capable, and great for everyday chat.',
+          highlight: true,
+          badge: 'Recommended',
+          onTap: () => onChosen([ModelVariant.gemma]),
+        ),
+        const SizedBox(height: 12),
 
-          // Qwen3 4B - GGUF
-          _OptionCard(
-            archBadge: 'GGUF',
-            archColor: Colors.orangeAccent.shade400,
-            icon: Icons.psychology,
-            title: 'Qwen3 4B - CPU (GGUF)',
-            sizeLabel: '~2.5 GB',
-            subtitle:
-                'Alibaba\'s Qwen3 4B model running on your CPU via the GGUF/llama.cpp engine. '
-                'Slower but strong at detailed reasoning, math, and coding.',
-            onTap: () => onChosen([ModelVariant.qwen4b]),
-          ),
-          const SizedBox(height: 12),
+        // Qwen3 4B - GGUF
+        _ModelCard(
+          archBadge: 'GGUF',
+          archColor: Colors.orangeAccent.shade400,
+          icon: Icons.psychology,
+          title: 'Qwen3 4B',
+          engineLabel: 'CPU - GGUF',
+          sizeLabel: '~2.5 GB',
+          subtitle:
+              'Alibaba\'s Qwen3 4B via llama.cpp. Slower but strong at reasoning, math, and coding.',
+          onTap: () => onChosen([ModelVariant.qwen4b]),
+        ),
+        const SizedBox(height: 12),
 
-          // Both
-          _OptionCard(
-            archBadge: 'Both',
-            archColor: accent,
-            icon: Icons.swap_horiz,
-            title: 'Download Both',
-            sizeLabel: '~5 GB',
-            subtitle:
-                'Enables Auto mode - defaults to Gemma (LiteRT GPU) for speed, '
-                'with Qwen3 4B (GGUF CPU) available for heavy reasoning tasks.',
-            onTap: () =>
-                onChosen([ModelVariant.gemma, ModelVariant.qwen4b]),
-          ),
+        // Both
+        _ModelCard(
+          archBadge: 'Both',
+          archColor: Theme.of(context).colorScheme.primary,
+          icon: Icons.swap_horiz,
+          title: 'Download Both',
+          engineLabel: 'GPU + CPU',
+          sizeLabel: '~5 GB',
+          subtitle:
+              'Enables Auto mode - defaults to Gemma (GPU) for speed, with Qwen3 4B (CPU) for heavy reasoning.',
+          onTap: () => onChosen([ModelVariant.gemma, ModelVariant.qwen4b]),
+        ),
 
-          const SizedBox(height: 24),
-          Text(
+        const SizedBox(height: 24),
+        Center(
+          child: Text(
             'You can download the other model later from within the app.',
             style: TextStyle(
               fontSize: 12,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
             ),
             textAlign: TextAlign.center,
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 16),
+      ],
     );
   }
 }
 
-class _OptionCard extends StatelessWidget {
+// ---------------------------------------------------------------------------
+// Model card - redesigned with vertical layout and overlaid badge
+// ---------------------------------------------------------------------------
+
+class _ModelCard extends StatelessWidget {
   final String archBadge;
   final Color archColor;
   final IconData icon;
   final String title;
+  final String engineLabel;
   final String sizeLabel;
   final String subtitle;
   final VoidCallback onTap;
   final bool highlight;
   final String? badge;
 
-  const _OptionCard({
+  const _ModelCard({
     required this.archBadge,
     required this.archColor,
     required this.icon,
     required this.title,
+    required this.engineLabel,
     required this.sizeLabel,
     required this.subtitle,
     required this.onTap,
@@ -438,113 +670,135 @@ class _OptionCard extends StatelessWidget {
 
     return Material(
       color: highlight
-          ? accent.withValues(alpha: 0.12)
+          ? accent.withValues(alpha: 0.10)
           : theme.colorScheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Arch badge circle
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: archColor.withValues(alpha: 0.15),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                      color: archColor.withValues(alpha: 0.35), width: 1),
-                ),
-                child: Center(
-                  child: Icon(icon, size: 20, color: archColor),
+              // Top row: icon circle + recommended badge
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: archColor.withValues(alpha: 0.15),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: archColor.withValues(alpha: 0.35), width: 1),
+                    ),
+                    child: Center(
+                      child: Icon(icon, size: 22, color: archColor),
+                    ),
+                  ),
+                  const Spacer(),
+                  if (badge != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: accent,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        badge!,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: theme.colorScheme.onPrimary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              // Title + arch badge
+              Row(
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: archColor.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      archBadge,
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: archColor,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              // Description
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.45,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
                 ),
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Title row
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            title,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: archColor.withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            archBadge,
-                            style: TextStyle(
-                              fontSize: 9,
-                              color: archColor,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.3,
-                            ),
-                          ),
-                        ),
-                        if (badge != null) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: accent,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              badge!,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: theme.colorScheme.onPrimary,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
+              const SizedBox(height: 14),
+              // Footer row: engine tag + size
+              Row(
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: archColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: archColor.withValues(alpha: 0.25)),
                     ),
-                    const SizedBox(height: 2),
-                    // Size label
-                    Text(
-                      sizeLabel,
+                    child: Text(
+                      engineLabel,
                       style: TextStyle(
                         fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: archColor.withValues(alpha: 0.85),
+                        color: archColor,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: theme.colorScheme.onSurface
-                            .withValues(alpha: 0.65),
-                        height: 1.4,
-                      ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    sizeLabel,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color:
+                          theme.colorScheme.onSurface.withValues(alpha: 0.5),
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.3),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              Icon(Icons.arrow_forward_ios,
-                  size: 14,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.4)),
             ],
           ),
         ),

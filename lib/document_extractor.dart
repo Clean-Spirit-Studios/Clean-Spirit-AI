@@ -4,32 +4,39 @@
 // so they can be fed into the local LLM as context.
 //
 // Supported formats:
-//   Binary: .pdf (read_pdf_text - uses PdfBox on Android), .docx (archive + xml)
+//   Binary: .pdf (syncfusion_flutter_pdf - full text extraction, no char limit),
+//           .docx (archive + xml)
 //   Text:   .txt .md .json .csv .log .yaml .yml .xml
 //   Code:   .dart .kt .java .js .ts .py
 //
-// read_pdf_text has a dead-simple API: getPDFtext(path) -> String.
-// No Windows pub-cache path-length issues, no native AAR to manage manually.
+// Feature 3: switched from read_pdf_text (3,000 char hard cap) to
+// syncfusion_flutter_pdf which returns the full PDF text. The cap is
+// raised to 12,000 chars (~3,400 tokens) - safe for Gemma 4 E2B (8k+)
+// and Qwen3 4B (32k+) context windows.
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
-import 'package:read_pdf_text/read_pdf_text.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:xml/xml.dart';
 
 /// Maximum characters returned for any document.
-/// At ~4 chars per token this is roughly 750 tokens - leaves room
-/// in the 4096-token context for the conversation and response.
-const _kMaxChars = 3000;
+/// At ~3.5 chars per token this is roughly 3,400 tokens - well within
+/// both Gemma 4 E2B (8k+ tokens) and Qwen3 4B (32k+ tokens) context windows.
+/// Raised from the old 3,000 char cap which was set for a 4,096-token window.
+const _kMaxChars = 12000;
 
 class DocumentExtractor {
   /// Extract text from [path] with the given [extension].
-  /// Returns at most [_kMaxChars] characters.
+  /// Returns at most [_kMaxChars] characters with a friendly truncation notice.
   static Future<String> extractText(String path, String extension) async {
     final raw = await _extractRaw(path, extension);
     if (raw.length <= _kMaxChars) return raw;
-    return '${raw.substring(0, _kMaxChars)}...\n[Document trimmed to first $_kMaxChars characters]';
+    final kilo = _kMaxChars ~/ 1000;
+    return '${raw.substring(0, _kMaxChars)}\n\n'
+        '[Document is large - showing first ${kilo}k characters. '
+        'Ask specific questions for best results.]';
   }
 
   static Future<String> _extractRaw(String path, String extension) async {
@@ -61,13 +68,23 @@ class DocumentExtractor {
     }
   }
 
-  /// Extract text from a PDF using read_pdf_text (PdfBox on Android).
-  /// Returns a plain string of all page text, or a fallback message if empty.
+  /// Extract text from a PDF using syncfusion_flutter_pdf.
+  /// Returns the full text of all pages with no artificial character limit.
+  /// Scanned/image-only PDFs will return empty text (no text layer present).
   static Future<String> _extractPdf(String path) async {
     try {
-      final text = await ReadPdfText.getPDFtext(path);
-      final trimmed = text.trim();
-      return trimmed.isEmpty ? '[No extractable text found in PDF]' : trimmed;
+      final bytes = await File(path).readAsBytes();
+      final document = PdfDocument(inputBytes: bytes);
+      try {
+        final extractor = PdfTextExtractor(document);
+        final text = extractor.extractText();
+        final trimmed = text.trim();
+        return trimmed.isEmpty
+            ? '[No extractable text found in PDF - the file may be a scanned image]'
+            : trimmed;
+      } finally {
+        document.dispose();
+      }
     } catch (e) {
       return '[PDF extraction failed: $e]';
     }

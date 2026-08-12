@@ -4,21 +4,29 @@
 //
 // Features:
 //   - Dual engine: Gemma 4 E2B (LiteRT GPU) and Qwen3 4B (GGUF CPU)
-//   - Model switcher in AppBar with clear architecture labels
+//   - Redesigned AppBar: centered title, hamburger drawer (left), ghost incognito (right)
+//   - Model selector pill below the title in the AppBar
+//   - History drawer with persistent past conversations (SharedPreferences)
+//   - Incognito mode - conversations in this mode are never saved
+//   - Animated GPU loading screen (Lottie) replacing the plain spinner
 //   - Image attachment (camera / gallery) - LiteRT vision path
 //   - Document attachment (PDF / DOCX / text) - extracted and injected as context
 //   - Claude-inspired welcome screen with time-of-day greeting
 //   - Wider chat bubbles so tables render properly
-//   - Em-dash replaced with hyphen in all user-facing text
+//   - Hyphens instead of em dashes in all user-facing text
 
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:lottie/lottie.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'attachment_service.dart';
 import 'chat_message.dart';
+import 'conversation_store.dart';
 import 'document_extractor.dart';
 import 'dual_engine.dart';
 import 'litert_engine.dart';
@@ -26,7 +34,7 @@ import 'markdown_renderer.dart';
 import 'model_loader.dart';
 
 // ---------------------------------------------------------------------------
-// App logo
+// App logo (unchanged)
 // ---------------------------------------------------------------------------
 
 class _AppLogo extends StatelessWidget {
@@ -114,7 +122,85 @@ class _AppLogo extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Model switcher - shows both engines with architecture labels
+// Ghost icon widget (drawn inline - no external asset needed as fallback)
+// ---------------------------------------------------------------------------
+
+class _GhostIcon extends StatelessWidget {
+  final double size;
+  final Color color;
+
+  const _GhostIcon({this.size = 24, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    // Try SVG asset first, fall back to CustomPaint ghost
+    return SvgPicture.asset(
+      'assets/icons/ghost.svg',
+      width: size,
+      height: size,
+      colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+      placeholderBuilder: (_) => CustomPaint(
+        size: Size(size, size),
+        painter: _GhostPainter(color: color),
+      ),
+    );
+  }
+}
+
+class _GhostPainter extends CustomPainter {
+  final Color color;
+  const _GhostPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    final w = size.width;
+    final h = size.height;
+
+    final path = Path()
+      // Head (semi-circle top)
+      ..moveTo(w * 0.5, h * 0.08)
+      ..addArc(
+        Rect.fromLTWH(w * 0.1, h * 0.08, w * 0.8, h * 0.55),
+        math.pi,
+        -math.pi,
+      )
+      // Right side down
+      ..lineTo(w * 0.9, h * 0.88)
+      // Wavy bottom - right
+      ..cubicTo(w * 0.9, h * 0.75, w * 0.75, h * 0.75, w * 0.75, h * 0.88)
+      // Wavy bottom - middle-right
+      ..cubicTo(w * 0.75, h * 0.75, w * 0.625, h * 0.75, w * 0.625, h * 0.88)
+      // Wavy bottom - middle
+      ..cubicTo(w * 0.625, h * 0.75, w * 0.5, h * 0.75, w * 0.5, h * 0.88)
+      // Wavy bottom - middle-left
+      ..cubicTo(w * 0.5, h * 0.75, w * 0.375, h * 0.75, w * 0.375, h * 0.88)
+      // Wavy bottom - left
+      ..cubicTo(w * 0.375, h * 0.75, w * 0.25, h * 0.75, w * 0.25, h * 0.88)
+      // Left side up
+      ..lineTo(w * 0.1, h * 0.88)
+      ..close();
+
+    canvas.drawPath(path, paint);
+
+    // Eyes
+    final eyePaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.5)
+      ..style = PaintingStyle.fill;
+    final eyeR = w * 0.08;
+    canvas.drawCircle(Offset(w * 0.38, h * 0.42), eyeR, eyePaint);
+    canvas.drawCircle(Offset(w * 0.62, h * 0.42), eyeR, eyePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GhostPainter old) => old.color != color;
+}
+
+// ---------------------------------------------------------------------------
+// Model switcher (unchanged from original)
 // ---------------------------------------------------------------------------
 
 class _ModelSwitcher extends StatelessWidget {
@@ -122,7 +208,7 @@ class _ModelSwitcher extends StatelessWidget {
   final bool hasGemma;
   final bool hasQwen4b;
   final bool isReloading;
-  final String activeBackendLabel; // 'GPU' | 'CPU'
+  final String activeBackendLabel;
   final ValueChanged<ActiveModel> onModelChanged;
   final VoidCallback onSwitchBackend;
 
@@ -158,139 +244,129 @@ class _ModelSwitcher extends StatelessWidget {
     final accent = theme.colorScheme.primary;
 
     if (isReloading) {
-      return Padding(
-        padding: const EdgeInsets.only(right: 12),
-        child: SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2, color: accent),
-        ),
+      return SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(strokeWidth: 2, color: accent),
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: PopupMenuButton<String>(
-        tooltip: 'Switch model or backend',
-        onSelected: (value) {
-          if (value == 'switch_backend') {
-            onSwitchBackend();
-          } else {
-            final model = switch (value) {
-              'gemma' => ActiveModel.gemma,
-              'qwen4b' => ActiveModel.qwen4b,
-              _ => ActiveModel.auto,
-            };
-            onModelChanged(model);
-          }
-        },
-        itemBuilder: (context) {
-          final items = <PopupMenuEntry<String>>[];
+    return PopupMenuButton<String>(
+      tooltip: 'Switch model or backend',
+      onSelected: (value) {
+        if (value == 'switch_backend') {
+          onSwitchBackend();
+        } else {
+          final model = switch (value) {
+            'gemma' => ActiveModel.gemma,
+            'qwen4b' => ActiveModel.qwen4b,
+            _ => ActiveModel.auto,
+          };
+          onModelChanged(model);
+        }
+      },
+      itemBuilder: (context) {
+        final items = <PopupMenuEntry<String>>[];
 
-          if (hasGemma) {
-            items.add(PopupMenuItem(
-              value: 'gemma',
-              child: _ModelMenuItem(
-                label: 'Gemma 4 E2B - LiteRT',
-                subtitle: 'GPU-accelerated - vision-capable - fast',
-                archBadge: 'LiteRT',
-                archColor: Colors.tealAccent.shade400,
-                icon: Icons.bolt,
-                selected: current == ActiveModel.gemma,
-              ),
-            ));
-          }
+        if (hasGemma) {
+          items.add(PopupMenuItem(
+            value: 'gemma',
+            child: _ModelMenuItem(
+              label: 'Gemma 4 E2B - LiteRT',
+              subtitle: 'GPU-accelerated - vision-capable - fast',
+              archBadge: 'LiteRT',
+              archColor: Colors.tealAccent.shade400,
+              icon: Icons.bolt,
+              selected: current == ActiveModel.gemma,
+            ),
+          ));
+        }
 
-          if (hasQwen4b) {
-            items.add(PopupMenuItem(
-              value: 'qwen4b',
-              child: _ModelMenuItem(
-                label: 'Qwen3 4B - GGUF',
-                subtitle: 'CPU-based - thorough reasoning',
-                archBadge: 'GGUF',
-                archColor: Colors.orangeAccent.shade400,
-                icon: Icons.psychology,
-                selected: current == ActiveModel.qwen4b,
-              ),
-            ));
-          }
+        if (hasQwen4b) {
+          items.add(PopupMenuItem(
+            value: 'qwen4b',
+            child: _ModelMenuItem(
+              label: 'Qwen3 4B - GGUF',
+              subtitle: 'CPU-based - thorough reasoning',
+              archBadge: 'GGUF',
+              archColor: Colors.orangeAccent.shade400,
+              icon: Icons.psychology,
+              selected: current == ActiveModel.qwen4b,
+            ),
+          ));
+        }
 
-          if (hasGemma && hasQwen4b) {
-            items.add(const PopupMenuDivider());
-            items.add(PopupMenuItem(
-              value: 'auto',
-              child: _ModelMenuItem(
-                label: 'Auto',
-                subtitle: 'Defaults to Gemma (LiteRT GPU)',
-                archBadge: 'Auto',
-                archColor: accent,
-                icon: Icons.swap_horiz,
-                selected: current == ActiveModel.auto,
-              ),
-            ));
-          }
+        if (hasGemma && hasQwen4b) {
+          items.add(const PopupMenuDivider());
+          items.add(PopupMenuItem(
+            value: 'auto',
+            child: _ModelMenuItem(
+              label: 'Auto',
+              subtitle: 'Defaults to Gemma (LiteRT GPU)',
+              archBadge: 'Auto',
+              archColor: accent,
+              icon: Icons.swap_horiz,
+              selected: current == ActiveModel.auto,
+            ),
+          ));
+        }
 
-          // Backend toggle for Gemma - only when Gemma is active
-          if (hasGemma &&
-              (current == ActiveModel.gemma ||
-                  current == ActiveModel.auto)) {
-            items.add(const PopupMenuDivider());
-            final isGpu = activeBackendLabel == 'GPU';
-            items.add(PopupMenuItem(
-              value: 'switch_backend',
-              child: _ModelMenuItem(
-                label: isGpu
-                    ? 'Switch Gemma to CPU (safe)'
-                    : 'Switch Gemma to GPU (fast)',
-                subtitle: isGpu
-                    ? 'Currently GPU - tap to use CPU instead'
-                    : 'Currently CPU - tap to use GPU instead',
-                archBadge: activeBackendLabel,
-                archColor: isGpu
-                    ? Colors.greenAccent.shade400
-                    : Colors.grey.shade400,
-                icon:
-                    isGpu ? Icons.memory : Icons.developer_board,
-                selected: false,
-              ),
-            ));
-          }
+        if (hasGemma &&
+            (current == ActiveModel.gemma || current == ActiveModel.auto)) {
+          items.add(const PopupMenuDivider());
+          final isGpu = activeBackendLabel == 'GPU';
+          items.add(PopupMenuItem(
+            value: 'switch_backend',
+            child: _ModelMenuItem(
+              label: isGpu
+                  ? 'Switch Gemma to CPU (safe)'
+                  : 'Switch Gemma to GPU (fast)',
+              subtitle: isGpu
+                  ? 'Currently GPU - tap to use CPU instead'
+                  : 'Currently CPU - tap to use GPU instead',
+              archBadge: activeBackendLabel,
+              archColor: isGpu
+                  ? Colors.greenAccent.shade400
+                  : Colors.grey.shade400,
+              icon: isGpu ? Icons.memory : Icons.developer_board,
+              selected: false,
+            ),
+          ));
+        }
 
-          return items;
-        },
-        child: Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: accent.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.memory, size: 14, color: accent),
-              const SizedBox(width: 4),
-              Text(
-                _pillLabel,
-                style: TextStyle(
-                  color: accent,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
+        return items;
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.memory, size: 14, color: accent),
+            const SizedBox(width: 4),
+            Text(
+              _pillLabel,
+              style: TextStyle(
+                color: accent,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
               ),
-              const SizedBox(width: 3),
-              Text(
-                '- $_backendSuffix',
-                style: TextStyle(
-                  color: accent.withValues(alpha: 0.7),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
+            ),
+            const SizedBox(width: 3),
+            Text(
+              '- $_backendSuffix',
+              style: TextStyle(
+                color: accent.withValues(alpha: 0.7),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
               ),
-              const SizedBox(width: 2),
-              Icon(Icons.expand_more, size: 14, color: accent),
-            ],
-          ),
+            ),
+            const SizedBox(width: 2),
+            Icon(Icons.expand_more, size: 14, color: accent),
+          ],
         ),
       ),
     );
@@ -342,8 +418,8 @@ class _ModelMenuItem extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
                       color: archColor.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(8),
@@ -377,7 +453,7 @@ class _ModelMenuItem extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Welcome screen
+// Welcome screen (unchanged from original)
 // ---------------------------------------------------------------------------
 
 class _WelcomeView extends StatelessWidget {
@@ -422,8 +498,7 @@ class _WelcomeView extends StatelessWidget {
       children: [
         Expanded(
           child: SingleChildScrollView(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -442,8 +517,7 @@ class _WelcomeView extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w400,
-                    color:
-                        theme.colorScheme.onSurface.withValues(alpha: 0.55),
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
                   ),
                 ),
                 const SizedBox(height: 40),
@@ -452,8 +526,7 @@ class _WelcomeView extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color:
-                        theme.colorScheme.onSurface.withValues(alpha: 0.45),
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.45),
                     letterSpacing: 1.0,
                   ),
                 ),
@@ -508,8 +581,7 @@ class _WelcomeView extends StatelessWidget {
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.wifi_off,
-                              size: 13, color: Colors.green),
+                          Icon(Icons.wifi_off, size: 13, color: Colors.green),
                           SizedBox(width: 5),
                           Text(
                             '100% on-device - no data sent anywhere',
@@ -543,7 +615,7 @@ class _WelcomeView extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Input bar with attachment support
+// Input bar with attachment support (unchanged)
 // ---------------------------------------------------------------------------
 
 class _InputBar extends StatelessWidget {
@@ -565,8 +637,7 @@ class _InputBar extends StatelessWidget {
     required this.onClearAttachment,
   });
 
-  bool get _hasAttachment =>
-      pendingImagePath != null || pendingDocName != null;
+  bool get _hasAttachment => pendingImagePath != null || pendingDocName != null;
 
   @override
   Widget build(BuildContext context) {
@@ -578,7 +649,6 @@ class _InputBar extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Attachment preview chip
           if (_hasAttachment)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
@@ -588,22 +658,19 @@ class _InputBar extends StatelessWidget {
                 onDismiss: onClearAttachment,
               ),
             ),
-
-          // Input row
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Attach button
                 Padding(
                   padding: const EdgeInsets.only(bottom: 2),
                   child: IconButton(
                     onPressed: isGenerating ? null : onAttachTap,
                     icon: Icon(
                       Icons.add_circle_outline,
-                      color: theme.colorScheme.onSurface
-                          .withValues(alpha: 0.6),
+                      color:
+                          theme.colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
                     tooltip: 'Attach image or document',
                   ),
@@ -636,8 +703,7 @@ class _InputBar extends StatelessWidget {
                         ? const SizedBox(
                             width: 18,
                             height: 18,
-                            child:
-                                CircularProgressIndicator(strokeWidth: 2),
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.arrow_upward),
                   ),
@@ -652,7 +718,7 @@ class _InputBar extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Attachment preview chip
+// Attachment preview chip (unchanged)
 // ---------------------------------------------------------------------------
 
 class _AttachmentChip extends StatelessWidget {
@@ -765,6 +831,10 @@ class _ChatScreenState extends State<ChatScreen> {
   // Conversation history (role/content pairs for LiteRT context)
   final List<Map<String, String>> _history = [];
 
+  // Feature 2 - incognito mode and session persistence
+  bool _isIncognito = false;
+  String _currentSessionId = '';
+
   @override
   void initState() {
     super.initState();
@@ -808,7 +878,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final docText = _pendingDocText;
     final docName = _pendingDocName;
 
-    // Vision guard: warn if user tries image on GGUF model
     if (imagePath != null && !_engine.isVisionAvailable) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -828,7 +897,6 @@ class _ChatScreenState extends State<ChatScreen> {
       history: List.from(_history),
     );
 
-    // Add user turn to history
     _history.add({'role': 'user', 'content': text});
 
     setState(() {
@@ -877,7 +945,6 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } finally {
       if (mounted) {
-        // Add assistant turn to history
         _history.add({
           'role': 'assistant',
           'content': _messages.last.text,
@@ -892,13 +959,267 @@ class _ChatScreenState extends State<ChatScreen> {
           );
           _isGenerating = false;
         });
+
+        // Feature 2 - persist conversation (skip in incognito mode)
+        if (!_isIncognito) {
+          if (_currentSessionId.isEmpty) {
+            _currentSessionId =
+                DateTime.now().millisecondsSinceEpoch.toString();
+          }
+          final firstUserMsg = _messages
+              .firstWhere(
+                (m) => m.role == ChatRole.user,
+                orElse: () => ChatTurn(role: ChatRole.user, text: 'Chat'),
+              )
+              .text;
+          final title = firstUserMsg.substring(
+            0,
+            firstUserMsg.length.clamp(0, 60),
+          );
+          await ConversationStore.saveSession(
+            id: _currentSessionId,
+            title: title,
+            turns: List.from(_messages),
+          );
+        }
       }
       WakelockPlus.disable();
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Attachment handling - bottom sheet routes to correct picker
+  // Feature 2 - incognito toggle
+  // ---------------------------------------------------------------------------
+
+  void _toggleIncognito() {
+    setState(() => _isIncognito = !_isIncognito);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _isIncognito
+              ? 'Incognito on - this conversation won\'t be saved'
+              : 'Incognito off - conversations will be saved',
+        ),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Feature 2 - history drawer
+  // ---------------------------------------------------------------------------
+
+  String _formatRelativeDate(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    if (diff.inDays == 1) return 'Yesterday';
+    if (diff.inDays < 7) return '${diff.inDays} days ago';
+    return '${dt.day}/${dt.month}/${dt.year}';
+  }
+
+  Widget _buildHistoryDrawer() {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+
+    return Drawer(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Drawer header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              child: Row(
+                children: [
+                  const _AppLogo(),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    onPressed: () => Navigator.pop(context),
+                    tooltip: 'Close',
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+              child: Text(
+                'Past conversations',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            // Session list
+            Expanded(
+              child: FutureBuilder<List<SessionSummary>>(
+                future: ConversationStore.listSessions(),
+                builder: (context, snap) {
+                  if (!snap.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final sessions = snap.data!;
+                  if (sessions.isEmpty) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.history_rounded,
+                              size: 36,
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.25),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'No saved conversations yet',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.4),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Start chatting and your conversations will appear here',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.3),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+                  return ListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    itemCount: sessions.length,
+                    itemBuilder: (context, i) {
+                      final s = sessions[i];
+                      return ListTile(
+                        contentPadding:
+                            const EdgeInsets.fromLTRB(20, 2, 8, 2),
+                        leading: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(
+                            Icons.chat_bubble_outline_rounded,
+                            size: 18,
+                            color: accent,
+                          ),
+                        ),
+                        title: Text(
+                          s.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: Text(
+                          _formatRelativeDate(s.updatedAt),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: theme.colorScheme.onSurface
+                                .withValues(alpha: 0.45),
+                          ),
+                        ),
+                        trailing: IconButton(
+                          icon: Icon(
+                            Icons.delete_outline,
+                            size: 18,
+                            color: theme.colorScheme.onSurface
+                                .withValues(alpha: 0.35),
+                          ),
+                          onPressed: () async {
+                            await ConversationStore.deleteSession(s.id);
+                            if (mounted) setState(() {});
+                          },
+                        ),
+                        onTap: () async {
+                          Navigator.pop(context);
+                          final turns =
+                              await ConversationStore.loadSession(s.id);
+                          if (turns != null && mounted) {
+                            setState(() {
+                              _messages.clear();
+                              _messages.addAll(turns);
+                              _currentSessionId = s.id;
+                              _history.clear();
+                              for (final t in turns) {
+                                _history.add({
+                                  'role': t.role.name,
+                                  'content': t.text,
+                                });
+                              }
+                            });
+                          }
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+            const Divider(height: 1),
+            // New conversation button
+            ListTile(
+              contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+              leading: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.add_rounded, size: 20, color: accent),
+              ),
+              title: Text(
+                'New conversation',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: accent,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() {
+                  _messages.clear();
+                  _history.clear();
+                  _currentSessionId = '';
+                  _isIncognito = false;
+                });
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Attachment handling
   // ---------------------------------------------------------------------------
 
   void _showAttachSheet() {
@@ -929,8 +1250,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 ListTile(
-                  leading:
-                      Icon(Icons.photo_library_outlined, color: accent),
+                  leading: Icon(Icons.photo_library_outlined, color: accent),
                   title: const Text('Gallery'),
                   subtitle: const Text('Pick an image from your photos'),
                   shape: RoundedRectangleBorder(
@@ -952,11 +1272,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   },
                 ),
                 ListTile(
-                  leading:
-                      Icon(Icons.description_outlined, color: accent),
+                  leading: Icon(Icons.description_outlined, color: accent),
                   title: const Text('Document'),
-                  subtitle:
-                      const Text('PDF, DOCX, TXT, and more'),
+                  subtitle: const Text('PDF, DOCX, TXT, and more'),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
                   onTap: () {
@@ -1004,12 +1322,14 @@ class _ChatScreenState extends State<ChatScreen> {
             _pendingDocName = picked.name;
             _pendingImagePath = null;
           });
-          if (raw.contains('[Document trimmed')) {
+          // Feature 3 - show a friendlier truncation notice
+          if (raw.contains('[Document is large')) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text(
-                    'Document trimmed to first 3000 characters to fit context.'),
-                duration: Duration(seconds: 3),
+                  'Large document - showing first 12k characters. Ask specific questions for best results.',
+                ),
+                duration: Duration(seconds: 4),
                 behavior: SnackBarBehavior.floating,
               ),
             );
@@ -1147,22 +1467,61 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+
     return Scaffold(
+      // Feature 2 - hamburger drawer with past conversations
+      drawer: _buildHistoryDrawer(),
+
       appBar: AppBar(
-        title: const _AppLogo(),
+        // Feature 2 - hamburger on left (auto-inserted by Scaffold when drawer
+        // is set), centered title column, ghost icon on right
+        centerTitle: true,
+        // Override leading to keep default hamburger style consistent
+        leading: Builder(
+          builder: (ctx) => IconButton(
+            icon: const Icon(Icons.menu_rounded),
+            tooltip: 'Past conversations',
+            onPressed: () => Scaffold.of(ctx).openDrawer(),
+          ),
+        ),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const _AppLogo(),
+            if (_loadState == _LoadState.ready) ...[
+              const SizedBox(height: 4),
+              _ModelSwitcher(
+                current: _engine.activeModel,
+                hasGemma: _engine.hasGemma,
+                hasQwen4b: _engine.hasQwen4b,
+                isReloading: _isReloadingBackend,
+                activeBackendLabel: _engine.activeBackendLabel,
+                onModelChanged: _onModelChanged,
+                onSwitchBackend: _switchBackend,
+              ),
+            ],
+          ],
+        ),
         actions: [
-          if (_loadState == _LoadState.ready)
-            _ModelSwitcher(
-              current: _engine.activeModel,
-              hasGemma: _engine.hasGemma,
-              hasQwen4b: _engine.hasQwen4b,
-              isReloading: _isReloadingBackend,
-              activeBackendLabel: _engine.activeBackendLabel,
-              onModelChanged: _onModelChanged,
-              onSwitchBackend: _switchBackend,
+          // Feature 2 - ghost icon for incognito mode
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: IconButton(
+              tooltip: _isIncognito ? 'Incognito - on' : 'Incognito - off',
+              onPressed: _toggleIncognito,
+              icon: _GhostIcon(
+                size: 22,
+                color: _isIncognito
+                    ? accent
+                    : theme.colorScheme.onSurface.withValues(alpha: 0.45),
+              ),
             ),
+          ),
         ],
       ),
+
       body: switch (_loadState) {
         _LoadState.loading => _buildLoadingState(),
         _LoadState.error => _buildErrorState(),
@@ -1170,6 +1529,10 @@ class _ChatScreenState extends State<ChatScreen> {
       },
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Feature 1 - Animated GPU loading screen
+  // ---------------------------------------------------------------------------
 
   Widget _buildLoadingState() {
     final theme = Theme.of(context);
@@ -1181,22 +1544,41 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 20),
+            // Lottie animation - replaces plain CircularProgressIndicator
+            SizedBox(
+              width: 180,
+              height: 180,
+              child: Lottie.asset(
+                'assets/animations/model_loading.json',
+                fit: BoxFit.contain,
+                // ErrorBuilder falls back to a styled spinner if asset is missing
+                errorBuilder: (context, error, stack) => SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: accent,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
             Text(
               _loadStatusMessage,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14),
+              style: TextStyle(
+                fontSize: 14,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             if (_loadProgress > 0) ...[
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: LinearProgressIndicator(
                   value: _loadProgress,
                   minHeight: 6,
-                  backgroundColor:
-                      theme.colorScheme.surfaceContainerHighest,
+                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
                   color: accent,
                 ),
               ),
@@ -1205,8 +1587,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 '${(_loadProgress * 100).toStringAsFixed(0)}%',
                 style: TextStyle(
                   fontSize: 12,
-                  color:
-                      theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                 ),
               ),
             ],
@@ -1223,11 +1604,9 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline,
-                size: 40, color: Colors.redAccent),
+            const Icon(Icons.error_outline, size: 40, color: Colors.redAccent),
             const SizedBox(height: 12),
-            Text(_errorText ?? 'Unknown error',
-                textAlign: TextAlign.center),
+            Text(_errorText ?? 'Unknown error', textAlign: TextAlign.center),
             const SizedBox(height: 16),
             FilledButton(
               onPressed: _boot,
@@ -1254,6 +1633,33 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return Column(
       children: [
+        // Incognito banner
+        if (_isIncognito)
+          Container(
+            width: double.infinity,
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _GhostIcon(
+                  size: 14,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Incognito - this conversation won\'t be saved',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
         Expanded(
           child: ListView.builder(
             controller: _scrollController,
@@ -1280,7 +1686,7 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Message bubble
+// Message bubble (unchanged from original)
 // ---------------------------------------------------------------------------
 
 class _MessageBubble extends StatefulWidget {
@@ -1365,7 +1771,6 @@ class _MessageBubbleState extends State<_MessageBubble> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Image thumbnail (user bubble - at top, rounded corners)
                   if (isUser && turn.imagePath != null)
                     ClipRRect(
                       borderRadius: const BorderRadius.only(
@@ -1379,7 +1784,6 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         fit: BoxFit.cover,
                       ),
                     ),
-
                   Padding(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 10),
@@ -1387,7 +1791,6 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Vision badge
                         if (isUser && turn.imagePath != null) ...[
                           const SizedBox(height: 4),
                           Container(
@@ -1423,8 +1826,6 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           ),
                           const SizedBox(height: 6),
                         ],
-
-                        // Document chip
                         if (isUser && turn.documentName != null) ...[
                           Row(
                             mainAxisSize: MainAxisSize.min,
@@ -1453,15 +1854,11 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           ),
                           const SizedBox(height: 6),
                         ],
-
-                        // Thinking panel (assistant)
                         if (hasThinking)
                           _ThinkingPanel(
                             thinking: turn.thinking,
                             isThinking: isThinking,
                           ),
-
-                        // Main text
                         if (showPlaceholder || turn.text.isNotEmpty)
                           Row(
                             mainAxisSize: MainAxisSize.min,
@@ -1473,8 +1870,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                                         'Thinking...',
                                         style: TextStyle(
                                           color: isUser
-                                              ? theme
-                                                  .colorScheme.onPrimary
+                                              ? theme.colorScheme.onPrimary
                                               : theme.colorScheme.onSurface
                                                   .withValues(alpha: 0.5),
                                           fontStyle: FontStyle.italic,
@@ -1484,8 +1880,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
                                         ? Text(
                                             turn.text,
                                             style: TextStyle(
-                                              color: theme
-                                                  .colorScheme.onPrimary,
+                                              color:
+                                                  theme.colorScheme.onPrimary,
                                             ),
                                           )
                                         : ChatMarkdown(
@@ -1513,8 +1909,6 @@ class _MessageBubbleState extends State<_MessageBubble> {
               ),
             ),
           ),
-
-          // Model label under last assistant bubble
           if (!isUser &&
               widget.isLast &&
               turn.text.isNotEmpty &&
@@ -1627,8 +2021,7 @@ class _ThinkingPanelState extends State<_ThinkingPanel> {
             decoration: BoxDecoration(
               color: theme.colorScheme.surface.withValues(alpha: 0.5),
               borderRadius: BorderRadius.circular(8),
-              border: Border(
-                  left: BorderSide(color: mutedColor, width: 2)),
+              border: Border(left: BorderSide(color: mutedColor, width: 2)),
             ),
             child: Text(
               widget.thinking,

@@ -26,14 +26,6 @@ dependencies:
     path: local_plugins/flutter_litert_lm
 
   # ---------------------------------------------------------------------------
-  # Optional: llama_flutter_android local plugin (needed by llama_cpp_dart
-  # on Android for the native JNI bridge). Copy from cross-platform project
-  # local_plugins/llama_flutter_android/ if the build requires it.
-  # ---------------------------------------------------------------------------
-  # llama_flutter_android:
-  #   path: local_plugins/llama_flutter_android
-
-  # ---------------------------------------------------------------------------
   # Core utilities (unchanged from original)
   # ---------------------------------------------------------------------------
   path_provider: ^2.1.4
@@ -51,16 +43,23 @@ dependencies:
   file_picker: ^11.0.2
   permission_handler: ^11.3.0
 
-  # Document text extraction
-  # Upgraded from ^3.6.0 / ^6.5.0 - llama_cpp_dart -> image ^4.7.2 requires
-  # archive ^4.x and xml ^7.x; these versions satisfy both.
+  # Document text extraction - pure Dart, no native deps
   archive: ^4.0.9          # unzips DOCX (pure Dart)
   xml: ^7.0.1              # parses word/document.xml inside DOCX
 
-  # PDF text extraction - pure Dart, no native deps, no Windows path-length issues.
-  # Replaces syncfusion_flutter_pdf which fails to resolve on Windows due to
-  # pub cache path length limits with deeply nested package names.
-  read_pdf_text: ^0.3.1
+  # PDF text extraction - Syncfusion (replaces read_pdf_text, no char limit)
+  # Free for revenue under USD 1M - no key required for text extraction
+  syncfusion_flutter_pdf: ^27.1.48
+
+  # ---------------------------------------------------------------------------
+  # Feature 1 - Animated GPU loading screen
+  # ---------------------------------------------------------------------------
+  lottie: ^3.1.0
+
+  # ---------------------------------------------------------------------------
+  # Feature 2 - Ghost icon SVG
+  # ---------------------------------------------------------------------------
+  flutter_svg: ^2.0.10
 
 dev_dependencies:
   flutter_test:
@@ -78,6 +77,10 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/animations/
+    - assets/icons/
 
   # Models are downloaded at runtime - no assets bundled.
   # This keeps the APK small (~20MB) instead of gigabytes.

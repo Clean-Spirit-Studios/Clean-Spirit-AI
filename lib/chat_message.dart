@@ -32,4 +32,33 @@ class ChatTurn {
     this.documentName,
     this.modelLabel,
   });
+
+  // ---------------------------------------------------------------------------
+  // JSON serialization - used by ConversationStore for history persistence
+  // ---------------------------------------------------------------------------
+
+  Map<String, dynamic> toJson() => {
+        'role': role.name,
+        'text': text,
+        'thinking': thinking,
+        'imagePath': imagePath,
+        'documentName': documentName,
+        'modelLabel': modelLabel,
+      };
+
+  factory ChatTurn.fromJson(Map<String, dynamic> map) {
+    final roleName = map['role'] as String? ?? 'user';
+    final role = ChatRole.values.firstWhere(
+      (r) => r.name == roleName,
+      orElse: () => ChatRole.user,
+    );
+    return ChatTurn(
+      role: role,
+      text: map['text'] as String? ?? '',
+      thinking: map['thinking'] as String? ?? '',
+      imagePath: map['imagePath'] as String?,
+      documentName: map['documentName'] as String?,
+      modelLabel: map['modelLabel'] as String?,
+    );
+  }
 }
