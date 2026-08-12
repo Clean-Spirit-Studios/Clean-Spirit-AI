@@ -32,6 +32,7 @@ import 'dual_engine.dart';
 import 'litert_engine.dart';
 import 'markdown_renderer.dart';
 import 'model_loader.dart';
+import 'settings_screen.dart';
 
 // ---------------------------------------------------------------------------
 // App logo (unchanged)
@@ -1211,6 +1212,40 @@ class _ChatScreenState extends State<ChatScreen> {
                 });
               },
             ),
+            // Settings button
+            ListTile(
+              contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+              leading: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.07),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.settings_outlined,
+                  size: 20,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
+              ),
+              title: Text(
+                'Settings',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const SettingsScreen(),
+                  ),
+                );
+              },
+            ),
             const SizedBox(height: 8),
           ],
         ),
@@ -1539,63 +1574,18 @@ class _ChatScreenState extends State<ChatScreen> {
   // ---------------------------------------------------------------------------
 
   Widget _buildLoadingState() {
-    final theme = Theme.of(context);
-    final accent = theme.colorScheme.primary;
+    final accent = Theme.of(context).colorScheme.primary;
 
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Lottie animation - replaces plain CircularProgressIndicator
-            SizedBox(
-              width: 180,
-              height: 180,
-              child: Lottie.asset(
-                'assets/animations/model_loading.json',
-                fit: BoxFit.contain,
-                // ErrorBuilder falls back to a styled spinner if asset is missing
-                errorBuilder: (context, error, stack) => SizedBox(
-                  width: 56,
-                  height: 56,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    color: accent,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _loadStatusMessage,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
-              ),
-            ),
-            const SizedBox(height: 20),
-            if (_loadProgress > 0) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: LinearProgressIndicator(
-                  value: _loadProgress,
-                  minHeight: 6,
-                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                  color: accent,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '${(_loadProgress * 100).toStringAsFixed(0)}%',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                ),
-              ),
-            ],
-          ],
+      child: Lottie.asset(
+        'assets/animations/model_loading.json',
+        width: 180,
+        height: 180,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stack) => SizedBox(
+          width: 56,
+          height: 56,
+          child: CircularProgressIndicator(strokeWidth: 3, color: accent),
         ),
       ),
     );
