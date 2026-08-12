@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="120" height="120" alt="Clean Spirit AI icon" src="https://github.com/user-attachments/assets/placeholder-icon" />
+
 
 # Clean Spirit AI
 
