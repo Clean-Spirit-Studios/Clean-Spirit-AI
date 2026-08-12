@@ -1478,6 +1478,7 @@ class _ChatScreenState extends State<ChatScreen> {
         // Feature 2 - hamburger on left (auto-inserted by Scaffold when drawer
         // is set), centered title column, ghost icon on right
         centerTitle: true,
+        toolbarHeight: 72,
         // Override leading to keep default hamburger style consistent
         leading: Builder(
           builder: (ctx) => IconButton(
@@ -1486,7 +1487,9 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: () => Scaffold.of(ctx).openDrawer(),
           ),
         ),
-        title: Column(
+        title: Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const _AppLogo(),
@@ -1503,6 +1506,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ],
           ],
+          ),
         ),
         actions: [
           // Feature 2 - ghost icon for incognito mode

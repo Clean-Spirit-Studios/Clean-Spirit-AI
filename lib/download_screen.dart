@@ -16,7 +16,6 @@ import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import 'chat_screen.dart' show _AppLogo;
 import 'model_loader.dart';
 
 class DownloadScreen extends StatefulWidget {
@@ -547,7 +546,7 @@ class _ModelChooser extends StatelessWidget {
       children: [
         // Hero section - app logo + tagline
         const SizedBox(height: 16),
-        const Center(child: _AppLogo()),  // _AppLogo is not const - fix below
+        Center(child: _AppLogo()),
 
         const SizedBox(height: 10),
         Center(
@@ -803,6 +802,95 @@ class _ModelCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// App logo widget (shared between download_screen and chat_screen)
+// ---------------------------------------------------------------------------
+
+class _AppLogo extends StatelessWidget {
+  const _AppLogo();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final onSurface = theme.colorScheme.onSurface;
+    final accent = theme.colorScheme.primary;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 26,
+          height: 26,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(
+                  color: onSurface,
+                  borderRadius: BorderRadius.circular(7),
+                ),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 5,
+                    height: 5,
+                    margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                    decoration: BoxDecoration(
+                      color: theme.scaffoldBackgroundColor,
+                      borderRadius: BorderRadius.circular(1.5),
+                    ),
+                  ),
+                  Container(
+                    width: 5,
+                    height: 5,
+                    margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                    decoration: BoxDecoration(
+                      color: theme.scaffoldBackgroundColor,
+                      borderRadius: BorderRadius.circular(1.5),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        RichText(
+          text: TextSpan(
+            children: [
+              TextSpan(
+                text: 'Clean Spirit ',
+                style: TextStyle(
+                  color: onSurface,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.3,
+                  height: 1.0,
+                ),
+              ),
+              TextSpan(
+                text: 'AI',
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.3,
+                  height: 1.0,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
