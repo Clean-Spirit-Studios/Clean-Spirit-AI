@@ -34,12 +34,16 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   // Model state
   bool _gemmaDownloaded   = false;
+  bool _gemmaE4bDownloaded = false;
   bool _qwenDownloaded    = false;
   bool _gemmaDownloading  = false;
+  bool _gemmaE4bDownloading = false;
   bool _qwenDownloading   = false;
   double _gemmaProgress   = 0;
+  double _gemmaE4bProgress = 0;
   double _qwenProgress    = 0;
   bool _gemmaDeleting     = false;
+  bool _gemmaE4bDeleting  = false;
   bool _qwenDeleting      = false;
 
   // General prefs
@@ -58,8 +62,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _refresh() async {
     final g = await ModelLoader.isGemmaDownloaded();
+    final g4b = await ModelLoader.isGemmaE4bDownloaded();
     final q = await ModelLoader.isQwen4bDownloaded();
-    if (mounted) setState(() { _gemmaDownloaded = g; _qwenDownloaded = q; });
+    if (mounted) {
+      setState(() {
+        _gemmaDownloaded = g;
+        _gemmaE4bDownloaded = g4b;
+        _qwenDownloaded = q;
+      });
+    }
   }
 
   Future<void> _loadPrefs() async {
@@ -97,16 +108,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _downloadModel(ModelVariant variant) async {
     setState(() {
-      if (variant == ModelVariant.gemma) { _gemmaDownloading = true; _gemmaProgress = 0; }
-      else { _qwenDownloading = true; _qwenProgress = 0; }
+      if (variant == ModelVariant.gemma) {
+        _gemmaDownloading = true;
+        _gemmaProgress = 0;
+      } else if (variant == ModelVariant.gemmaE4b) {
+        _gemmaE4bDownloading = true;
+        _gemmaE4bProgress = 0;
+      } else {
+        _qwenDownloading = true;
+        _qwenProgress = 0;
+      }
     });
     try {
       await ModelLoader.downloadModel(
         variant: variant,
         onProgress: (p) {
           if (mounted) setState(() {
-            if (variant == ModelVariant.gemma) _gemmaProgress = p;
-            else _qwenProgress = p;
+            if (variant == ModelVariant.gemma) {
+              _gemmaProgress = p;
+            } else if (variant == ModelVariant.gemmaE4b) {
+              _gemmaE4bProgress = p;
+            } else {
+              _qwenProgress = p;
+            }
           });
         },
       );
@@ -119,14 +143,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } finally {
       if (mounted) setState(() {
-        if (variant == ModelVariant.gemma) _gemmaDownloading = false;
-        else _qwenDownloading = false;
+        if (variant == ModelVariant.gemma) {
+          _gemmaDownloading = false;
+        } else if (variant == ModelVariant.gemmaE4b) {
+          _gemmaE4bDownloading = false;
+        } else {
+          _qwenDownloading = false;
+        }
       });
     }
   }
 
   Future<void> _deleteModel(ModelVariant variant) async {
-    final name = variant == ModelVariant.gemma ? 'Gemma 4 E2B' : 'Qwen3 4B';
+    final name = switch (variant) {
+      ModelVariant.gemma => 'Gemma 4 E2B',
+      ModelVariant.gemmaE4b => 'Gemma 4 E4B',
+      ModelVariant.qwen4b => 'Qwen3 4B',
+    };
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -145,12 +178,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirmed != true) return;
 
     setState(() {
-      if (variant == ModelVariant.gemma) _gemmaDeleting = true;
-      else _qwenDeleting = true;
+      if (variant == ModelVariant.gemma) {
+        _gemmaDeleting = true;
+      } else if (variant == ModelVariant.gemmaE4b) {
+        _gemmaE4bDeleting = true;
+      } else {
+        _qwenDeleting = true;
+      }
     });
     try {
       final dir = await getApplicationDocumentsDirectory();
-      final fileName = variant == ModelVariant.gemma ? kGemmaFileName : kQwen4bFileName;
+      final fileName = switch (variant) {
+        ModelVariant.gemma => kGemmaFileName,
+        ModelVariant.gemmaE4b => kGemmaE4bFileName,
+        ModelVariant.qwen4b => kQwen4bFileName,
+      };
       final f = File('${dir.path}/models/$fileName');
       if (await f.exists()) await f.delete();
       await _refresh();
@@ -167,8 +209,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } finally {
       if (mounted) setState(() {
-        if (variant == ModelVariant.gemma) _gemmaDeleting = false;
-        else _qwenDeleting = false;
+        if (variant == ModelVariant.gemma) {
+          _gemmaDeleting = false;
+        } else if (variant == ModelVariant.gemmaE4b) {
+          _gemmaE4bDeleting = false;
+        } else {
+          _qwenDeleting = false;
+        }
       });
     }
   }
@@ -213,6 +260,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onCancel:   () async {
               await ModelLoader.cancelDownload();
               setState(() { _gemmaDownloading = false; _gemmaProgress = 0; });
+            },
+          ),
+
+          const SizedBox(height: 10),
+
+          _ModelCard(
+            title: 'Gemma 4 E4B',
+            subtitle: 'GPU - higher quality - needs ~5 GB RAM',
+            sizeLabel: kGemmaE4bSizeLabel,
+            icon: Icons.auto_awesome_rounded,
+            accent: accent,
+            surface: surface,
+            theme: theme,
+            downloaded: _gemmaE4bDownloaded,
+            downloading: _gemmaE4bDownloading,
+            progress: _gemmaE4bProgress,
+            deleting: _gemmaE4bDeleting,
+            fileSizeFuture: _fileSize(kGemmaE4bFileName),
+            fmtBytes: _fmtBytes,
+            onDownload: () => _downloadModel(ModelVariant.gemmaE4b),
+            onDelete:   () => _deleteModel(ModelVariant.gemmaE4b),
+            onCancel:   () async {
+              await ModelLoader.cancelDownload();
+              setState(() {
+                _gemmaE4bDownloading = false;
+                _gemmaE4bProgress = 0;
+              });
             },
           ),
 

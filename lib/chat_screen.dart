@@ -3,7 +3,7 @@
 // Full offline chat UI for Clean Spirit AI.
 //
 // Features:
-//   - Dual engine: Gemma 4 E2B (LiteRT GPU) and Qwen3 4B (GGUF CPU)
+//   - Dual engine: Gemma 4 E2B/E4B (LiteRT GPU) and Qwen3 4B (GGUF CPU)
 //   - Redesigned AppBar: centered title, hamburger drawer (left), ghost incognito (right)
 //   - Model selector pill below the title in the AppBar
 //   - History drawer with persistent past conversations (SharedPreferences)
@@ -207,6 +207,7 @@ class _GhostPainter extends CustomPainter {
 class _ModelSwitcher extends StatelessWidget {
   final ActiveModel current;
   final bool hasGemma;
+  final bool hasGemmaE4b;
   final bool hasQwen4b;
   final bool isReloading;
   final String activeBackendLabel;
@@ -216,6 +217,7 @@ class _ModelSwitcher extends StatelessWidget {
   const _ModelSwitcher({
     required this.current,
     required this.hasGemma,
+    required this.hasGemmaE4b,
     required this.hasQwen4b,
     required this.isReloading,
     required this.activeBackendLabel,
@@ -227,6 +229,8 @@ class _ModelSwitcher extends StatelessWidget {
     switch (current) {
       case ActiveModel.gemma:
         return 'Gemma E2B';
+      case ActiveModel.gemmaE4b:
+        return 'Gemma E4B';
       case ActiveModel.qwen4b:
         return 'Qwen3 4B';
       case ActiveModel.auto:
@@ -260,6 +264,7 @@ class _ModelSwitcher extends StatelessWidget {
         } else {
           final model = switch (value) {
             'gemma' => ActiveModel.gemma,
+            'gemmaE4b' => ActiveModel.gemmaE4b,
             'qwen4b' => ActiveModel.qwen4b,
             _ => ActiveModel.auto,
           };
@@ -283,6 +288,20 @@ class _ModelSwitcher extends StatelessWidget {
           ));
         }
 
+        if (hasGemmaE4b) {
+          items.add(PopupMenuItem(
+            value: 'gemmaE4b',
+            child: _ModelMenuItem(
+              label: 'Gemma 4 E4B - LiteRT',
+              subtitle: 'GPU-accelerated - vision-capable - best quality - ~5 GB RAM',
+              archBadge: 'LiteRT',
+              archColor: Colors.tealAccent.shade400,
+              icon: Icons.auto_awesome_rounded,
+              selected: current == ActiveModel.gemmaE4b,
+            ),
+          ));
+        }
+
         if (hasQwen4b) {
           items.add(PopupMenuItem(
             value: 'qwen4b',
@@ -297,13 +316,13 @@ class _ModelSwitcher extends StatelessWidget {
           ));
         }
 
-        if (hasGemma && hasQwen4b) {
+        if ((hasGemma || hasGemmaE4b) && hasQwen4b) {
           items.add(const PopupMenuDivider());
           items.add(PopupMenuItem(
             value: 'auto',
             child: _ModelMenuItem(
               label: 'Auto',
-              subtitle: 'Defaults to Gemma (LiteRT GPU)',
+              subtitle: 'Prefers E4B, then E2B (LiteRT GPU)',
               archBadge: 'Auto',
               archColor: accent,
               icon: Icons.swap_horiz,
@@ -312,8 +331,10 @@ class _ModelSwitcher extends StatelessWidget {
           ));
         }
 
-        if (hasGemma &&
-            (current == ActiveModel.gemma || current == ActiveModel.auto)) {
+        if ((hasGemma || hasGemmaE4b) &&
+            (current == ActiveModel.gemma ||
+                current == ActiveModel.gemmaE4b ||
+                current == ActiveModel.auto)) {
           items.add(const PopupMenuDivider());
           final isGpu = activeBackendLabel == 'GPU';
           items.add(PopupMenuItem(
@@ -1533,6 +1554,7 @@ class _ChatScreenState extends State<ChatScreen> {
               _ModelSwitcher(
                 current: _engine.activeModel,
                 hasGemma: _engine.hasGemma,
+                hasGemmaE4b: _engine.hasGemmaE4b,
                 hasQwen4b: _engine.hasQwen4b,
                 isReloading: _isReloadingBackend,
                 activeBackendLabel: _engine.activeBackendLabel,

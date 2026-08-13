@@ -46,15 +46,29 @@ class _DownloadScreenState extends State<DownloadScreen> {
   String get _currentVariantLabel {
     if (_modelsToDownload == null) return '';
     final v = _modelsToDownload![_currentDownloadIndex];
-    return v == ModelVariant.gemma ? 'Gemma 4 E2B (LiteRT)' : 'Qwen3 4B (GGUF)';
+    return switch (v) {
+      ModelVariant.gemma => 'Gemma 4 E2B (LiteRT)',
+      ModelVariant.gemmaE4b => 'Gemma 4 E4B (LiteRT)',
+      ModelVariant.qwen4b => 'Qwen3 4B (GGUF)',
+    };
   }
 
   String get _sizeWarningText {
     if (_modelsToDownload == null) return '';
-    if (_modelsToDownload!.length == 2) return 'approximately 5 GB combined';
-    return _modelsToDownload!.first == ModelVariant.gemma
-        ? 'approximately 2.46 GB'
-        : 'approximately 2.5 GB';
+    if (_modelsToDownload!.length > 1) {
+      final hasE4b = _modelsToDownload!.contains(ModelVariant.gemmaE4b);
+      final hasE2b = _modelsToDownload!.contains(ModelVariant.gemma);
+      final hasQwen = _modelsToDownload!.contains(ModelVariant.qwen4b);
+      if (hasE4b && hasQwen) return 'approximately 5.9 GB combined';
+      if (hasE2b && hasQwen) return 'approximately 5 GB combined';
+      if (hasE2b && hasE4b) return 'approximately 5.9 GB combined';
+      return 'multiple models';
+    }
+    return switch (_modelsToDownload!.first) {
+      ModelVariant.gemma => 'approximately 2.46 GB',
+      ModelVariant.gemmaE4b => 'approximately 3.40 GB',
+      ModelVariant.qwen4b => 'approximately 2.5 GB',
+    };
   }
 
   void _onModelChosen(List<ModelVariant> variants) {
@@ -562,7 +576,7 @@ class _ModelChooser extends StatelessWidget {
         const SizedBox(height: 8),
         Center(
           child: Text(
-            'Choose a model to download. Both run fully offline after the\none-time download.',
+            'Choose a model to download. All run fully offline after the\none-time download.',
             style: TextStyle(
               fontSize: 13,
               height: 1.5,
@@ -589,6 +603,21 @@ class _ModelChooser extends StatelessWidget {
         ),
         const SizedBox(height: 12),
 
+        // Gemma 4 E4B - LiteRT
+        _ModelCard(
+          archBadge: 'LiteRT',
+          archColor: Colors.tealAccent.shade400,
+          icon: Icons.auto_awesome_rounded,
+          title: 'Gemma 4 E4B',
+          engineLabel: 'GPU - LiteRT',
+          sizeLabel: '~3.40 GB',
+          subtitle:
+              'Higher quality Gemma on your GPU. Better at complex questions - needs ~5 GB RAM.',
+          badge: 'Best quality',
+          onTap: () => onChosen([ModelVariant.gemmaE4b]),
+        ),
+        const SizedBox(height: 12),
+
         // Qwen3 4B - GGUF
         _ModelCard(
           archBadge: 'GGUF',
@@ -612,7 +641,7 @@ class _ModelChooser extends StatelessWidget {
           engineLabel: 'GPU + CPU',
           sizeLabel: '~5 GB',
           subtitle:
-              'Enables Auto mode - defaults to Gemma (GPU) for speed, with Qwen3 4B (CPU) for heavy reasoning.',
+              'Enables Auto mode - Gemma E2B (GPU) for speed, with Qwen3 4B (CPU) for heavy reasoning. Want E4B + Qwen? Download them individually above.',
           onTap: () => onChosen([ModelVariant.gemma, ModelVariant.qwen4b]),
         ),
 

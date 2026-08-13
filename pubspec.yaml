@@ -1,7 +1,7 @@
 name: gpt2_chat
-description: Clean Spirit AI - offline chat with Gemma 4 E2B (LiteRT GPU) and Qwen3 4B (GGUF CPU).
+description: Clean Spirit AI - offline chat with Gemma 4 (E2B/E4B, LiteRT GPU) and Qwen3 4B (GGUF CPU).
 publish_to: 'none'
-version: 0.2.0
+version: 0.3.0
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -18,7 +18,7 @@ dependencies:
   llama_cpp_dart: 0.9.0-dev.9
 
   # ---------------------------------------------------------------------------
-  # LiteRT-LM GPU inference - Gemma 4 E2B
+  # LiteRT-LM GPU inference - Gemma 4 E2B/E4B
   # Local plugin copied from cross-platform-llm-client/local_plugins/
   # Not on pub.dev - must be present at local_plugins/flutter_litert_lm/
   # ---------------------------------------------------------------------------

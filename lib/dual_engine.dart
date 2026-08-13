@@ -1,12 +1,16 @@
 // dual_engine.dart
 //
-// Unified engine that coordinates two architectures:
+// Unified engine that coordinates three model options across two architectures:
 //
 //   Gemma 4 E2B Instruct (LiteRT-LM)
 //     - GPU-accelerated via Google LiteRT
 //     - Vision-capable (can read images)
 //     - Fast, ideal for everyday chat and multimodal tasks
-//     - Default in Auto mode
+//
+//   Gemma 4 E4B Instruct (LiteRT-LM)
+//     - Uses the exact same LiteRT engine/path as E2B
+//     - GPU-accelerated and vision-capable
+//     - Higher quality, with a higher RAM requirement
 //
 //   Qwen3 4B Instruct (GGUF / llama_cpp_dart)
 //     - CPU-based inference
@@ -17,7 +21,7 @@
 //   - initialize() loads ONLY the model that will actually be used on startup
 //     (based on saved preference). The other model is loaded lazily on first
 //     switch. This keeps startup fast - you don't wait for both 2.5GB models.
-//   - Auto mode always routes to Gemma (LiteRT) when available.
+//   - Auto mode prefers E4B, then E2B, then Qwen3.
 //   - Switching models at runtime loads that model if not yet loaded.
 
 import 'dart:async';
@@ -34,13 +38,16 @@ import 'model_loader.dart';
 // ---------------------------------------------------------------------------
 
 enum ActiveModel {
-  /// Gemma 4 E2B via LiteRT - GPU, fast, vision-capable (default in Auto)
+  /// Gemma 4 E2B via LiteRT - GPU, fast, vision-capable
   gemma,
+
+  /// Gemma 4 E4B via LiteRT - GPU, higher quality, vision-capable
+  gemmaE4b,
 
   /// Qwen3 4B via GGUF/llama.cpp - CPU, thorough answers
   qwen4b,
 
-  /// Auto: uses Gemma (LiteRT) when available, Qwen3 as fallback
+  /// Auto: uses E4B, then E2B, then Qwen3 as fallback
   auto,
 }
 
@@ -76,43 +83,59 @@ class DualEngine {
 
   // Which models are present on disk
   bool _hasGemma = false;
+  bool _hasGemmaE4b = false;
   bool _hasQwen4b = false;
 
   // Which models have been loaded into memory
   bool _gemmaLoaded = false;
+  bool _gemmaE4bLoadedAsActive = false;
   bool _qwenLoaded = false;
 
   ActiveModel _activeModel = ActiveModel.auto;
   ActiveModel get activeModel => _activeModel;
 
   bool get hasGemma => _hasGemma;
+  bool get hasGemmaE4b => _hasGemmaE4b;
   bool get hasQwen4b => _hasQwen4b;
-  bool get isReady => _gemmaLoaded || _qwenLoaded;
+  bool get isReady =>
+      _gemmaLoaded || _gemmaE4bLoadedAsActive || _qwenLoaded;
 
   String get activeModelLabel {
     switch (_activeModel) {
       case ActiveModel.gemma:
         return 'Gemma E2B - LiteRT';
+      case ActiveModel.gemmaE4b:
+        return 'Gemma E4B - LiteRT';
       case ActiveModel.qwen4b:
         return 'Qwen3 4B - GGUF';
       case ActiveModel.auto:
-        return _hasGemma ? 'Gemma E2B - LiteRT' : 'Qwen3 4B - GGUF';
+        return _autoLiteRtLabel();
     }
   }
 
   String get activeBackendLabel {
     if (_activeModel == ActiveModel.qwen4b) return 'CPU';
-    if (_activeModel == ActiveModel.gemma) {
+    if (_activeModel == ActiveModel.gemma ||
+        _activeModel == ActiveModel.gemmaE4b) {
       return _liteRtEngine.activeBackend.toUpperCase();
     }
     // auto
-    return _hasGemma ? _liteRtEngine.activeBackend.toUpperCase() : 'CPU';
+    return (_hasGemmaE4b || _hasGemma)
+        ? _liteRtEngine.activeBackend.toUpperCase()
+        : 'CPU';
   }
 
   bool get isVisionAvailable {
     final useLiteRt = _activeModel == ActiveModel.gemma ||
-        (_activeModel == ActiveModel.auto && _hasGemma);
+        _activeModel == ActiveModel.gemmaE4b ||
+        (_activeModel == ActiveModel.auto && (_hasGemma || _hasGemmaE4b));
     return useLiteRt && _liteRtEngine.isVisionEnabled;
+  }
+
+  String _autoLiteRtLabel() {
+    if (_hasGemmaE4b) return 'Gemma E4B - LiteRT';
+    if (_hasGemma) return 'Gemma E2B - LiteRT';
+    return 'Qwen3 4B - GGUF';
   }
 
   static const _kPrefModel = 'selected_model_v2';
@@ -128,9 +151,10 @@ class DualEngine {
     void Function(String)? onStatusMessage,
   }) async {
     _hasGemma = await ModelLoader.isGemmaDownloaded();
+    _hasGemmaE4b = await ModelLoader.isGemmaE4bDownloaded();
     _hasQwen4b = await ModelLoader.isQwen4bDownloaded();
 
-    if (!_hasGemma && !_hasQwen4b) {
+    if (!_hasGemma && !_hasGemmaE4b && !_hasQwen4b) {
       throw ModelNotFoundException('No model found on device');
     }
 
@@ -139,6 +163,7 @@ class DualEngine {
     if (saved != null) {
       final valid = switch (saved) {
         ActiveModel.gemma => _hasGemma,
+        ActiveModel.gemmaE4b => _hasGemmaE4b,
         ActiveModel.qwen4b => _hasQwen4b,
         ActiveModel.auto => true,
       };
@@ -147,40 +172,66 @@ class DualEngine {
       _activeModel = _defaultModel();
     }
 
-    // Determine which model to actually load on startup
-    final shouldLoadGemma = _hasGemma &&
-        (_activeModel == ActiveModel.gemma ||
-            _activeModel == ActiveModel.auto);
+    final liteRtVariant = _resolveLiteRtVariant();
+    final shouldLoadLiteRt = liteRtVariant != null;
     final shouldLoadQwen = _hasQwen4b &&
         (_activeModel == ActiveModel.qwen4b ||
-            (!shouldLoadGemma && _activeModel == ActiveModel.auto));
+            (_activeModel == ActiveModel.auto && liteRtVariant == null));
 
-    // Load Gemma (LiteRT) if it's the startup model
-    if (shouldLoadGemma) {
+    if (shouldLoadLiteRt) {
       final backendMode = await LiteRtEngine.loadSavedBackendMode();
       final backendLabel =
           backendMode == LiteRtBackendMode.gpu ? 'GPU' : 'CPU';
-      onStatusMessage?.call('Loading Gemma 4 E2B on $backendLabel...');
+      onStatusMessage?.call(
+        'Loading ${_liteRtVariantLabel(liteRtVariant!)} on $backendLabel...',
+      );
 
+      final modelPath = await ModelLoader.resolveModelPath(liteRtVariant);
       final result = await _liteRtEngine.load(
+        modelPath: modelPath,
         performanceMode: backendMode,
         enableVision: true,
         onProgress: (p) => onProgress?.call(p),
       );
 
       if (result.success) {
-        _gemmaLoaded = true;
-        print('[DualEngine] Gemma ready on ${result.backend.toUpperCase()}');
+        _setLiteRtLoadedVariant(liteRtVariant);
+        print(
+          '[DualEngine] ${_liteRtVariantLabel(liteRtVariant)} ready on '
+          '${result.backend.toUpperCase()}',
+        );
       } else {
-        // Non-fatal: Gemma failed, fall through to try Qwen
-        print('[DualEngine] Gemma load failed: ${result.message}');
-        _hasGemma = false;
-        _gemmaLoaded = false;
+        print(
+          '[DualEngine] ${_liteRtVariantLabel(liteRtVariant)} load failed: '
+          '${result.message}',
+        );
+        _clearLiteRtPresence(liteRtVariant);
+
+        // Auto mode can fall back from E4B to E2B before trying Qwen.
+        if (_activeModel == ActiveModel.auto &&
+            liteRtVariant == ModelVariant.gemmaE4b &&
+            _hasGemma) {
+          final fallbackPath =
+              await ModelLoader.resolveGemmaPath();
+          onStatusMessage?.call(
+            'Loading Gemma 4 E2B on $backendLabel...',
+          );
+          final fallback = await _liteRtEngine.load(
+            modelPath: fallbackPath,
+            performanceMode: backendMode,
+            enableVision: true,
+            onProgress: (p) => onProgress?.call(p),
+          );
+          if (fallback.success) {
+            _setLiteRtLoadedVariant(ModelVariant.gemma);
+          }
+        }
       }
     }
 
-    // Load Qwen3 4B (GGUF) if it's the startup model, or if Gemma failed
-    if (shouldLoadQwen || (!_gemmaLoaded && _hasQwen4b)) {
+    // Load Qwen3 4B if explicitly selected, if Auto has no working LiteRT
+    // model, or as the existing fallback when the selected LiteRT model fails.
+    if (shouldLoadQwen || (!_liteRtModelLoaded && _hasQwen4b)) {
       onStatusMessage?.call('Loading Qwen3 4B...');
       try {
         _qwenEngine = await _spawnQwenEngine();
@@ -193,22 +244,72 @@ class DualEngine {
         _qwenLoaded = false;
       }
 
-      // If Gemma failed and Qwen loaded, switch active model to qwen
-      if (!_gemmaLoaded && _qwenLoaded) {
+      if (!_liteRtModelLoaded && _qwenLoaded) {
         _activeModel = ActiveModel.qwen4b;
       }
     }
 
-    if (!_gemmaLoaded && !_qwenLoaded) {
+    if (!_liteRtModelLoaded && !_qwenLoaded) {
       throw ModelNotFoundException('All models failed to load');
     }
 
     onProgress?.call(1.0);
   }
 
+  bool get _liteRtModelLoaded =>
+      _gemmaLoaded || _gemmaE4bLoadedAsActive;
+
+  ModelVariant? _resolveLiteRtVariant() {
+    if (_activeModel == ActiveModel.auto) {
+      if (_hasGemmaE4b) return ModelVariant.gemmaE4b;
+      if (_hasGemma) return ModelVariant.gemma;
+      return null;
+    }
+
+    if (_activeModel == ActiveModel.gemmaE4b && _hasGemmaE4b) {
+      return ModelVariant.gemmaE4b;
+    }
+    if (_activeModel == ActiveModel.gemma && _hasGemma) {
+      return ModelVariant.gemma;
+    }
+    return null;
+  }
+
+  ModelVariant? _resolveLiteRtVariantForModel(ActiveModel model) {
+    if (model == ActiveModel.gemmaE4b && _hasGemmaE4b) {
+      return ModelVariant.gemmaE4b;
+    }
+    if (model == ActiveModel.gemma && _hasGemma) {
+      return ModelVariant.gemma;
+    }
+    if (model == ActiveModel.auto) {
+      return _resolveLiteRtVariant();
+    }
+    return null;
+  }
+
+  String _liteRtVariantLabel(ModelVariant variant) {
+    return variant == ModelVariant.gemmaE4b ? 'Gemma 4 E4B' : 'Gemma 4 E2B';
+  }
+
+  void _setLiteRtLoadedVariant(ModelVariant variant) {
+    _gemmaLoaded = variant == ModelVariant.gemma;
+    _gemmaE4bLoadedAsActive = variant == ModelVariant.gemmaE4b;
+  }
+
+  void _clearLiteRtPresence(ModelVariant variant) {
+    if (variant == ModelVariant.gemma) {
+      _hasGemma = false;
+      _gemmaLoaded = false;
+    } else {
+      _hasGemmaE4b = false;
+      _gemmaE4bLoadedAsActive = false;
+    }
+  }
+
   ActiveModel _defaultModel() {
-    // Default to Auto (which uses Gemma) when Gemma is available
-    if (_hasGemma) return ActiveModel.auto;
+    // Auto prefers E4B, then E2B, then Qwen3.
+    if (_hasGemmaE4b || _hasGemma) return ActiveModel.auto;
     if (_hasQwen4b) return ActiveModel.qwen4b;
     return ActiveModel.auto;
   }
@@ -250,39 +351,81 @@ class DualEngine {
     _activeModel = model;
     _saveModel(model);
 
-    final needsGemma = model == ActiveModel.gemma ||
-        (model == ActiveModel.auto && _hasGemma);
-    final needsQwen = model == ActiveModel.qwen4b ||
-        (model == ActiveModel.auto && !_hasGemma);
+    final targetVariant = _resolveLiteRtVariantForModel(model);
 
-    if (needsGemma && !_gemmaLoaded && _hasGemma) {
-      final backendMode = await LiteRtEngine.loadSavedBackendMode();
-      final label = backendMode == LiteRtBackendMode.gpu ? 'GPU' : 'CPU';
-      onStatus?.call('Loading Gemma 4 E2B on $label...');
-      final result = await _liteRtEngine.load(
-        performanceMode: backendMode,
-        enableVision: true,
-        onProgress: onProgress,
-      );
-      _gemmaLoaded = result.success;
-      return result.success;
-    }
+    if (targetVariant != null) {
+      final alreadyLoaded =
+          (targetVariant == ModelVariant.gemma && _gemmaLoaded) ||
+          (targetVariant == ModelVariant.gemmaE4b &&
+              _gemmaE4bLoadedAsActive);
 
-    if (needsQwen && !_qwenLoaded && _hasQwen4b) {
-      onStatus?.call('Loading Qwen3 4B...');
-      try {
-        _qwenEngine ??= await _spawnQwenEngine();
-        _qwenChat = await _qwenEngine!.createChat();
-        _qwenChat!.addSystem(_kQwenSystemPrompt);
-        _qwenLoaded = true;
-        return true;
-      } catch (e) {
-        print('[DualEngine] Lazy Qwen load failed: $e');
-        return false;
+      if (!alreadyLoaded) {
+        // LiteRT holds one .litertlm file at a time. Dispose the current
+        // model before loading the selected E2B or E4B file.
+        await _liteRtEngine.dispose();
+        _gemmaLoaded = false;
+        _gemmaE4bLoadedAsActive = false;
+
+        final modelPath = await ModelLoader.resolveModelPath(targetVariant);
+        final backendMode = await LiteRtEngine.loadSavedBackendMode();
+        onStatus?.call(
+          'Loading ${_liteRtVariantLabel(targetVariant)} on '
+          '${backendMode == LiteRtBackendMode.gpu ? 'GPU' : 'CPU'}...',
+        );
+        final result = await _liteRtEngine.load(
+          modelPath: modelPath,
+          performanceMode: backendMode,
+          enableVision: true,
+          onProgress: onProgress,
+        );
+        _setLiteRtLoadedVariant(
+          result.success ? targetVariant : ModelVariant.gemma,
+        );
+        if (!result.success) {
+          _gemmaLoaded = false;
+          _gemmaE4bLoadedAsActive = false;
+        }
+        return result.success;
       }
+      return true;
     }
 
-    return true;
+    // Qwen path - unchanged from existing logic.
+    if (model == ActiveModel.qwen4b && _hasQwen4b) {
+      if (!_qwenLoaded) {
+        onStatus?.call('Loading Qwen3 4B...');
+        try {
+          _qwenEngine ??= await _spawnQwenEngine();
+          _qwenChat = await _qwenEngine!.createChat();
+          _qwenChat!.addSystem(_kQwenSystemPrompt);
+          _qwenLoaded = true;
+          return true;
+        } catch (e) {
+          print('[DualEngine] Lazy Qwen load failed: $e');
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // Auto can fall back to Qwen when no LiteRT model is available.
+    if (model == ActiveModel.auto && _hasQwen4b) {
+      if (!_qwenLoaded) {
+        onStatus?.call('Loading Qwen3 4B...');
+        try {
+          _qwenEngine ??= await _spawnQwenEngine();
+          _qwenChat = await _qwenEngine!.createChat();
+          _qwenChat!.addSystem(_kQwenSystemPrompt);
+          _qwenLoaded = true;
+        } catch (e) {
+          print('[DualEngine] Lazy Qwen load failed: $e');
+          return false;
+        }
+      }
+      return true;
+    }
+
+    return false;
   }
 
   // -------------------------------------------------------------------------
@@ -296,34 +439,52 @@ class DualEngine {
     void Function(double)? onProgress,
     void Function(String)? onStatus,
   }) async {
-    if (!_hasGemma) return '';
+    if (!_liteRtModelLoaded) return '';
 
     await LiteRtEngine.saveBackendMode(mode);
+    final currentVariant =
+        _gemmaE4bLoadedAsActive ? ModelVariant.gemmaE4b : ModelVariant.gemma;
+
     await _liteRtEngine.dispose();
     _gemmaLoaded = false;
+    _gemmaE4bLoadedAsActive = false;
 
     final label = mode == LiteRtBackendMode.gpu ? 'GPU' : 'CPU';
-    onStatus?.call('Reloading Gemma on $label...');
+    onStatus?.call('Reloading ${_liteRtVariantLabel(currentVariant)} on $label...');
 
+    final modelPath = await ModelLoader.resolveModelPath(currentVariant);
     final result = await _liteRtEngine.load(
+      modelPath: modelPath,
       performanceMode: mode,
       enableVision: true,
       onProgress: onProgress,
     );
 
     if (!result.success && mode == LiteRtBackendMode.gpu) {
-      // GPU failed after explicit selection - fall back silently to CPU
       await LiteRtEngine.saveBackendMode(LiteRtBackendMode.cpu);
       final cpuResult = await _liteRtEngine.load(
+        modelPath: modelPath,
         performanceMode: LiteRtBackendMode.cpu,
         enableVision: true,
         onProgress: onProgress,
       );
-      _gemmaLoaded = cpuResult.success;
+      _setLiteRtLoadedVariant(
+        cpuResult.success ? currentVariant : ModelVariant.gemma,
+      );
+      if (!cpuResult.success) {
+        _gemmaLoaded = false;
+        _gemmaE4bLoadedAsActive = false;
+      }
       return cpuResult.backend;
     }
 
-    _gemmaLoaded = result.success;
+    _setLiteRtLoadedVariant(
+      result.success ? currentVariant : ModelVariant.gemma,
+    );
+    if (!result.success) {
+      _gemmaLoaded = false;
+      _gemmaE4bLoadedAsActive = false;
+    }
     return result.backend;
   }
 
@@ -341,17 +502,20 @@ class DualEngine {
     List<Map<String, String>> history = const [],
   }) {
     final shouldUseLiteRt = _activeModel == ActiveModel.gemma ||
-        (_activeModel == ActiveModel.auto && _hasGemma);
+        _activeModel == ActiveModel.gemmaE4b ||
+        (_activeModel == ActiveModel.auto && (_hasGemma || _hasGemmaE4b));
 
-    if (shouldUseLiteRt && _gemmaLoaded) {
+    if (shouldUseLiteRt && _liteRtModelLoaded) {
       final prompt = _buildPrompt(userText, docText);
       final stream = _streamFromLiteRt(
         prompt: prompt,
         history: history,
         imagePath: imagePath,
       );
+      final modelName =
+          _gemmaE4bLoadedAsActive ? 'Gemma E4B' : 'Gemma E2B';
       final label =
-          'Gemma E2B - LiteRT ${_liteRtEngine.activeBackend.toUpperCase()}';
+          '$modelName - LiteRT ${_liteRtEngine.activeBackend.toUpperCase()}';
       return (stream, label);
     }
 
@@ -461,6 +625,7 @@ class DualEngine {
     _qwenEngine = null;
     _qwenChat = null;
     _gemmaLoaded = false;
+    _gemmaE4bLoadedAsActive = false;
     _qwenLoaded = false;
   }
 
@@ -474,6 +639,8 @@ class DualEngine {
     switch (raw) {
       case 'gemma':
         return ActiveModel.gemma;
+      case 'gemmaE4b':
+        return ActiveModel.gemmaE4b;
       case 'qwen4b':
         return ActiveModel.qwen4b;
       case 'auto':
@@ -487,6 +654,7 @@ class DualEngine {
     final prefs = await SharedPreferences.getInstance();
     final raw = switch (model) {
       ActiveModel.gemma => 'gemma',
+      ActiveModel.gemmaE4b => 'gemmaE4b',
       ActiveModel.qwen4b => 'qwen4b',
       ActiveModel.auto => 'auto',
     };
