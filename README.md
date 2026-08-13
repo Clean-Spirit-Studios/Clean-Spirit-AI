@@ -30,17 +30,6 @@ Choose a model from the first-launch download screen or manage models later from
 | Gemma 4 E4B Instruct | LiteRT (GPU with CPU fallback) | ~3.40 GB | Higher-quality answers, complex questions, image understanding |
 | Qwen3 4B Instruct | llama.cpp (CPU) | ~2.5 GB | Detailed reasoning, math, coding, long-form answers |
 
-### Gemma 4 E4B
-
-Gemma 4 E4B is the third model option and uses the **same LiteRT pathway as Gemma 4 E2B**. Both models are loaded through the shared `LiteRtEngine`, so E4B does not introduce a second inference backend.
-
-E4B is the larger, higher-quality LiteRT option shown in the app UI. The model card notes that it needs approximately **5 GB RAM**. The download screen and Settings screen surface this requirement alongside the model size.
-
-The configured model file is:
-
-```text
-gemma-4-E4B-it.litertlm
-```
 
 ### LiteRT model switching
 
@@ -136,11 +125,6 @@ The first-launch download flow offers the model choices as cards using the exist
 - Approximately 2.5 GB
 - Intended for detailed reasoning, math, coding, and long-form responses
 
-### Download Both
-
-The existing **Download Both** option remains E2B + Qwen3 4B for compatibility with the previous two-model flow.
-
-It does not automatically include E4B. E4B can be downloaded separately from its model card.
 
 ---
 
@@ -302,7 +286,7 @@ Approximate model storage requirements:
 
 These are model download/storage figures, not a guarantee of runtime memory usage.
 
-Gemma 4 E4B is the higher-quality LiteRT option and its model card calls for approximately **5 GB RAM**. Devices with limited available RAM may experience slower loading or may rely on the existing LiteRT CPU fallback if GPU loading cannot be used.
+Gemma 4 E4B is the higher-quality LiteRT option and it calls for approximately **5 GB RAM**. Devices with limited available RAM may experience slower loading or may rely on the existing LiteRT CPU fallback if GPU loading cannot be used.
 
 Because E2B and E4B share one `LiteRtEngine`, only one of the two LiteRT models is resident in memory at a time.
 
@@ -323,32 +307,6 @@ Qwen3 4B .gguf ─────────> llama.cpp ────────�
 The E4B integration adds model selection, downloading, persistence, and UI handling without introducing a new inference engine.
 
 The LiteRT engine's existing GPU crash guard remains model-agnostic. If GPU loading falls back to CPU, the same backend behavior is available to both E2B and E4B.
-
----
-
-## Model download source
-
-Gemma 4 E4B is configured to download the LiteRT-LM model from the `litert-community` Hugging Face repository using:
-
-```text
-https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm
-```
-
-Configured file:
-
-```text
-gemma-4-E4B-it.litertlm
-```
-
-The app displays the requested approximate size of **3.40 GB** in its model cards. Actual network download size can differ from the UI estimate as the hosted model artifact changes.
-
----
-
-## Version
-
-Current application version: **0.3.0**
-
-The 0.3.0 update adds Gemma 4 E4B as the third model option while retaining the existing E2B and Qwen3 flows.
 
 ---
 
