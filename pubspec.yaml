@@ -1,4 +1,4 @@
-name: gpt2_chat
+name: csai
 description: Clean Spirit AI - offline chat with Gemma 4 (E2B/E4B, LiteRT GPU) and Qwen3 4B (GGUF CPU).
 publish_to: 'none'
 version: 0.3.0

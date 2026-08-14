@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.gpt2_chat"
+    namespace = "com.epcs.csai"
     compileSdk = flutter.compileSdkVersion
 
     // NDK 28 is the highest version required across all plugins (jni requires 28.2.13676358).
@@ -23,7 +23,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.gpt2_chat"
+        applicationId = "com.epcs.csai"
         // minSdk 26 is required by LiteRT GPU (same as llama-cpp-dart CPU AAR).
         minSdk = 26
         targetSdk = flutter.targetSdkVersion
