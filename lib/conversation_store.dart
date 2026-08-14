@@ -96,6 +96,7 @@ class ConversationStore {
     await prefs.remove('$_kSessionPrefix$id');
   }
 
+  // TODO: wire to Settings > Clear all conversations.
   static Future<void> clearAll() async {
     final prefs = await SharedPreferences.getInstance();
     final index = prefs.getStringList(_kSessionIndexKey) ?? [];

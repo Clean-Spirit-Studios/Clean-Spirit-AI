@@ -37,10 +37,8 @@ class _AppRoot extends StatefulWidget {
   State<_AppRoot> createState() => _AppRootState();
 }
 
-enum _RootState { checking, needsDownload, ready }
-
 class _AppRootState extends State<_AppRoot> {
-  _RootState _state = _RootState.checking;
+  bool? _hasModel;
 
   @override
   void initState() {
@@ -51,26 +49,30 @@ class _AppRootState extends State<_AppRoot> {
   Future<void> _check() async {
     final downloaded = await ModelLoader.isAnyModelDownloaded();
     if (!mounted) return;
-    setState(() {
-      _state = downloaded ? _RootState.ready : _RootState.needsDownload;
-    });
+    setState(() => _hasModel = downloaded);
   }
 
   @override
   Widget build(BuildContext context) {
-    switch (_state) {
-      case _RootState.checking:
-        return const Scaffold(
-          body: Center(child: CircularProgressIndicator()),
-        );
-      case _RootState.needsDownload:
-        return DownloadScreen(
-          onDownloadComplete: () {
-            setState(() => _state = _RootState.ready);
-          },
-        );
-      case _RootState.ready:
-        return const ChatScreen();
+    // Never block the first frame on model discovery. ChatScreen immediately
+    // renders its welcome UI and starts model initialization in the background.
+    // If this is the first launch with no model on disk, the fast presence
+    // check switches to the existing download flow.
+    if (_hasModel == null) {
+      // Keep the first frame model-free. ChatScreen must not initialize the
+      // engine until we know a model exists, otherwise first launch briefly
+      // shows a ModelNotFoundException before DownloadScreen appears.
+      return const Scaffold(body: SizedBox.shrink());
     }
+
+    if (_hasModel == false) {
+      return DownloadScreen(
+        onDownloadComplete: () {
+          setState(() => _hasModel = true);
+        },
+      );
+    }
+
+    return const ChatScreen();
   }
 }

@@ -341,6 +341,21 @@ class DualEngine {
     _saveModel(v);
   }
 
+  Future<bool> _loadQwenIfNeeded({void Function(String)? onStatus}) async {
+    if (_qwenLoaded) return true;
+    onStatus?.call('Loading Qwen3 4B...');
+    try {
+      _qwenEngine ??= await _spawnQwenEngine();
+      _qwenChat = await _qwenEngine!.createChat();
+      _qwenChat!.addSystem(_kQwenSystemPrompt);
+      _qwenLoaded = true;
+      return true;
+    } catch (e) {
+      print('[DualEngine] Lazy Qwen load failed: $e');
+      return false;
+    }
+  }
+
   /// Switch to a model, loading it if it hasn't been loaded yet.
   /// Returns true if the switch succeeded.
   Future<bool> switchToModel(
@@ -390,41 +405,14 @@ class DualEngine {
       return true;
     }
 
-    // Qwen path - unchanged from existing logic.
     if (model == ActiveModel.qwen4b && _hasQwen4b) {
-      if (!_qwenLoaded) {
-        onStatus?.call('Loading Qwen3 4B...');
-        try {
-          _qwenEngine ??= await _spawnQwenEngine();
-          _qwenChat = await _qwenEngine!.createChat();
-          _qwenChat!.addSystem(_kQwenSystemPrompt);
-          _qwenLoaded = true;
-          return true;
-        } catch (e) {
-          print('[DualEngine] Lazy Qwen load failed: $e');
-          return false;
-        }
-      }
-      return true;
+      return _loadQwenIfNeeded(onStatus: onStatus);
     }
 
     // Auto can fall back to Qwen when no LiteRT model is available.
     if (model == ActiveModel.auto && _hasQwen4b) {
-      if (!_qwenLoaded) {
-        onStatus?.call('Loading Qwen3 4B...');
-        try {
-          _qwenEngine ??= await _spawnQwenEngine();
-          _qwenChat = await _qwenEngine!.createChat();
-          _qwenChat!.addSystem(_kQwenSystemPrompt);
-          _qwenLoaded = true;
-        } catch (e) {
-          print('[DualEngine] Lazy Qwen load failed: $e');
-          return false;
-        }
-      }
-      return true;
+      return _loadQwenIfNeeded(onStatus: onStatus);
     }
-
     return false;
   }
 
