@@ -33,6 +33,7 @@ import 'widgets/input_bar.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/welcome_view.dart';
 import 'widgets/history_drawer.dart';
+import 'widgets/raptor_loading_screen.dart';
 import 'utils/text_utils.dart';
 
 // ---------------------------------------------------------------------------
@@ -60,6 +61,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _isModelLoading => _loadState == _LoadState.loading;
   bool _isReloadingBackend = false;
   String? _loadStatusMessage;
+  DateTime? _loadStartedAt;
 
   // Attachment state
   String? _pendingImagePath;
@@ -85,6 +87,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _loadState = _LoadState.loading;
         _errorText = null;
         _loadStatusMessage = 'Loading model...';
+        _loadStartedAt = DateTime.now();
       });
     }
 
@@ -100,10 +103,23 @@ class _ChatScreenState extends State<ChatScreen> {
           setState(() => _loadStatusMessage = message);
         },
       );
+      // Let the raptor complete at least one full 7-frame cycle before
+      // transitioning, even when the model initializes very quickly.
+      final startedAt = _loadStartedAt;
+      if (startedAt != null) {
+        const minimumAnimation = Duration(milliseconds: 777);
+        final elapsed = DateTime.now().difference(startedAt);
+        final remaining = minimumAnimation - elapsed;
+        if (remaining > Duration.zero) {
+          await Future<void>.delayed(remaining);
+        }
+      }
+
       if (mounted) {
         setState(() {
           _loadState = _LoadState.ready;
           _loadStatusMessage = null;
+          _loadStartedAt = null;
         });
       }
     } catch (e) {
@@ -117,6 +133,14 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     }
+  }
+
+  double? get _parsedProgress {
+    final msg = _loadStatusMessage;
+    if (msg == null) return null;
+    final match = RegExp(r'(\d+)%').firstMatch(msg);
+    if (match == null) return null;
+    return int.parse(match.group(1)!) / 100.0;
   }
 
   Future<void> _send() async {
@@ -609,7 +633,7 @@ class _ChatScreenState extends State<ChatScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const AppLogo(),
-            if (_isModelLoading || _isReloadingBackend)
+            if (_isReloadingBackend)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Row(
@@ -675,11 +699,24 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
 
-      body: Column(
-        children: [
-          if (_loadState == _LoadState.error && _errorText != null) _buildErrorBanner(),
-          Expanded(child: _buildChat()),
-        ],
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 400),
+        transitionBuilder: (child, animation) =>
+            FadeTransition(opacity: animation, child: child),
+        child: _loadState == _LoadState.loading
+            ? RaptorLoadingScreen(
+                key: const ValueKey('raptor_loading'),
+                statusMessage: _loadStatusMessage,
+                progress: _parsedProgress,
+              )
+            : Column(
+                key: const ValueKey('chat_body'),
+                children: [
+                  if (_loadState == _LoadState.error && _errorText != null)
+                    _buildErrorBanner(),
+                  Expanded(child: _buildChat()),
+                ],
+              ),
       ),
     );
   }

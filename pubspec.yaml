@@ -81,6 +81,7 @@ flutter:
   assets:
     - assets/animations/
     - assets/icons/
+    - assets/raptor/
 
   # Models are downloaded at runtime - no assets bundled.
   # This keeps the APK small (~20MB) instead of gigabytes.

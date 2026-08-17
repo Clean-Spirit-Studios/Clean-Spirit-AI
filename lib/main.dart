@@ -46,6 +46,17 @@ class _AppRootState extends State<_AppRoot> {
     _check();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    for (var i = 1; i <= 7; i++) {
+      precacheImage(
+        AssetImage('assets/raptor/frame_0$i.jpg'),
+        context,
+      );
+    }
+  }
+
   Future<void> _check() async {
     final downloaded = await ModelLoader.isAnyModelDownloaded();
     if (!mounted) return;
