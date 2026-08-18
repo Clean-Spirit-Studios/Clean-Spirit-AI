@@ -606,6 +606,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final accent = theme.colorScheme.primary;
 
     return Scaffold(
+      backgroundColor:
+          _loadState == _LoadState.loading ? Colors.black : null,
+
       // Feature 2 - hamburger drawer with past conversations
       drawer: HistoryDrawer(
         onNewConversation: _newConversation,
@@ -614,7 +617,9 @@ class _ChatScreenState extends State<ChatScreen> {
         onOpenSettings: _openSettings,
       ),
 
-      appBar: AppBar(
+      appBar: _loadState == _LoadState.loading
+          ? null
+          : AppBar(
         // Feature 2 - hamburger on left (auto-inserted by Scaffold when drawer
         // is set), centered title column, ghost icon on right
         centerTitle: true,

@@ -61,8 +61,8 @@ class _RaptorLoadingScreenState extends State<RaptorLoadingScreen> {
     final isLandscape = size.width > size.height;
     // Fill more of the screen so the raptor feels intentional, not floating
     final imageSize = isLandscape
-        ? (size.height * 0.75).clamp(0.0, 400.0)
-        : (size.width * 0.85).clamp(0.0, 420.0);
+        ? (size.height * 0.50).clamp(0.0, 280.0)
+        : (size.width * 0.52).clamp(0.0, 260.0);
 
     return Scaffold(
       // Pure black so the raptor's black background is seamless
